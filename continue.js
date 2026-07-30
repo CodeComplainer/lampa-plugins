@@ -372,8 +372,17 @@
       s += (RESOLUTION_TIER[p.resolution] || 0) * 100;
       s += p.source_rank;
 
-      // та же раздача, что смотрели раньше — сильный сигнал
-      if (cand.viewed) s += 150;
+      // Продолжение из той же раздачи. Самый сильный сигнал: следующая серия
+      // почти всегда лежит там же, где предыдущая, и переключать релиз посреди
+      // сезона незачем.
+      if (hasEpisode(cand, ctx)) s += 400;
+      if (cand.viewed) s += 300;
+
+      // раздача, похожая на прошлую: та же студия и то же качество
+      if (ctx.last) {
+        if (ctx.last.voice && p.voices.indexOf(ctx.last.voice) >= 0) s += 250;
+        if (ctx.last.resolution && p.resolution === ctx.last.resolution) s += 60;
+      }
       if (ctx.voice && p.voices.indexOf(ctx.voice) >= 0) s += 200;
 
       // студия, которую обычно смотрит пользователь
@@ -382,13 +391,24 @@
           if (ctx.voice_rating[v]) s += 80;
         });
       }
-
-      // раздача содержит нужную серию
-      if (ctx.episode && p.episodes) {
-        if (ctx.episode >= p.episodes[0] && ctx.episode <= p.episodes[1]) s += 50;
-      }
       s += Math.min(cand.seeders, 100) * 0.5;
       return s;
+    }
+
+    /** Раздача содержит нужную серию */
+    function hasEpisode(cand, ctx) {
+      if (!ctx.episode || !cand.parsed.episodes) return false;
+      return ctx.episode >= cand.parsed.episodes[0] && ctx.episode <= cand.parsed.episodes[1];
+    }
+
+    /**
+     * Знакомая раздача, в которой лежит нужная серия. Если такая есть — спрашивать
+     * не о чем: продолжаем ровно там, где остановились.
+     */
+    function sameRelease(list, ctx) {
+      return list.find(function (cand) {
+        return cand.viewed && hasEpisode(cand, ctx);
+      }) || null;
     }
 
     /**
@@ -424,10 +444,14 @@
       list.sort(function (a, b) {
         return b.score - a.score;
       });
+      var same = sameRelease(list, ctx);
       return {
         list: list,
         relaxed: relax,
-        confident: isConfident(list, relax),
+        // продолжение из знакомой раздачи не требует подтверждения
+        confident: !!same || isConfident(list, relax),
+        continues: !!same,
+        voices: voiceOptions(list, 5),
         reason: ''
       };
     }
@@ -446,16 +470,29 @@
     }
 
     /**
-     * Уверенность в выборе. Если лидер оторвался меньше чем на 15%,
-     * либо пришлось ослабить перевод или качество — лучше спросить.
+     * Уверенность в выборе.
+     *
+     * Близкие очки у лидеров — НЕ повод спрашивать: если оба варианта хороши,
+     * пользователю всё равно, каким именно смотреть, а лишний вопрос ломает
+     * весь смысл кнопки. Спрашиваем только когда пришлось нарушить то, что
+     * пользователь задал сам: перевод или качество.
      */
     function isConfident(list, relax) {
-      if (relax.indexOf('voice') >= 0 || relax.indexOf('quality') >= 0) return false;
-      if (list.length < 2) return true;
-      var top = list[0].score;
-      var second = list[1].score;
-      if (top <= 0) return false;
-      return (top - second) / top >= 0.15;
+      return relax.indexOf('voice') === -1 && relax.indexOf('quality') === -1;
+    }
+
+    /**
+     * Разные студии в верхушке списка. Нужно, чтобы понять, есть ли вообще
+     * из чего выбирать, когда предпочтение по озвучке ещё не задано.
+     */
+    function voiceOptions(list, limit) {
+      var out = [];
+      list.slice(0, limit || 5).forEach(function (cand) {
+        cand.parsed.voices.forEach(function (v) {
+          if (out.indexOf(v) === -1) out.push(v);
+        });
+      });
+      return out;
     }
 
     /**
@@ -484,7 +521,8 @@
         no_hdr: filter.hdr === 'no',
         no_dv: filter.dv === 'no',
         no_cam: params.no_cam !== false,
-        voice_rating: params.voice_rating || null
+        voice_rating: params.voice_rating || null,
+        last: params.last || null
       };
     }
     function toArray(value) {
@@ -524,20 +562,270 @@
     };
 
     /**
+     * Что именно запускать: продолжить начатую серию, включить следующую
+     * или начать сериал с начала.
+     *
+     * Логика вынесена в чистую функцию: список серий и прогресс приходят снаружи,
+     * поэтому её можно проверять тестами без запущенного приложения.
+     */
+
+    /**
+     * Порог «досмотрено». Тот же, что в самой Lampa: плеер предлагает продолжить
+     * только если просмотрено меньше 90%.
+     */
+    var WATCHED = 90;
+
+    /**
+     * @param {Array} episodes - [{season_number, episode_number}], по порядку выхода
+     * @param {Function} viewOf - (season, episode) => {percent} прогресс по серии
+     * @returns {{mode: string, season: number|null, episode: number|null, percent: number}}
+     *
+     * mode:
+     *   resume — серия начата, но не досмотрена
+     *   next   — предыдущая досмотрена, включаем следующую
+     *   first  — ничего не смотрели
+     *   done   — досмотрены все вышедшие серии
+     */
+    function decideSeries(episodes, viewOf) {
+      var list = (episodes || []).filter(function (ep) {
+        return ep && ep.episode_number;
+      });
+      if (!list.length) return {
+        mode: 'first',
+        season: null,
+        episode: null,
+        percent: 0
+      };
+      var last_index = -1;
+      var last_view = null;
+
+      // Идём с конца: интересует самая поздняя серия, к которой прикасались.
+      // Перебор с начала дал бы неверный ответ, если сериал начали пересматривать.
+      for (var i = list.length - 1; i >= 0; i--) {
+        var view = viewOf(list[i].season_number, list[i].episode_number) || {};
+        if (view.percent) {
+          last_index = i;
+          last_view = view;
+          break;
+        }
+      }
+      if (last_index === -1) {
+        return {
+          mode: 'first',
+          season: list[0].season_number,
+          episode: list[0].episode_number,
+          percent: 0
+        };
+      }
+
+      // начатую, но не досмотренную серию просто продолжаем
+      if (last_view.percent < WATCHED) {
+        return {
+          mode: 'resume',
+          season: list[last_index].season_number,
+          episode: list[last_index].episode_number,
+          percent: last_view.percent
+        };
+      }
+      var next = list[last_index + 1];
+      if (!next) {
+        return {
+          mode: 'done',
+          season: list[last_index].season_number,
+          episode: list[last_index].episode_number,
+          percent: last_view.percent
+        };
+      }
+      return {
+        mode: 'next',
+        season: next.season_number,
+        episode: next.episode_number,
+        percent: 0
+      };
+    }
+
+    /**
+     * Фильм: серий нет, решается только тем, начат он или нет.
+     */
+    function decideMovie(view) {
+      var percent = (view || {}).percent || 0;
+      if (!percent) return {
+        mode: 'first',
+        season: null,
+        episode: null,
+        percent: 0
+      };
+      if (percent < WATCHED) return {
+        mode: 'resume',
+        season: null,
+        episode: null,
+        percent: percent
+      };
+      return {
+        mode: 'done',
+        season: null,
+        episode: null,
+        percent: percent
+      };
+    }
+
+    /**
+     * Подпись под кнопкой. Показывает, что произойдёт по нажатию,
+     * чтобы решение плагина не было неожиданным.
+     */
+    function label(decision, translate) {
+      var t = translate || function (key) {
+        return key;
+      };
+      if (decision.season && decision.episode) {
+        var where = 'S' + decision.season + ' · ' + t('continue_episode') + ' ' + decision.episode;
+        if (decision.mode === 'resume') return where + ' · ' + decision.percent + '%';
+        return where;
+      }
+      if (decision.mode === 'resume') return decision.percent + '%';
+      return '';
+    }
+    var resume = {
+      decideSeries: decideSeries,
+      decideMovie: decideMovie,
+      label: label,
+      WATCHED: WATCHED
+    };
+
+    /**
+     * Запуск выбранной раздачи.
+     *
+     * Своей цепочки TorrServer здесь нет и не должно быть: Lampa.Torrent.start уже
+     * умеет добавить торрент, дождаться файлов, разобрать серии, привязать прогресс
+     * и собрать плейлист для перехода к следующей серии. Нам остаётся дождаться
+     * списка файлов и нажать нужный за пользователя.
+     */
+
+    /** Сколько ждём тишины после последнего отрисованного файла */
+    var SETTLE = 200;
+
+    /** Сколько ждём сам список файлов: торрент может подниматься долго */
+    var TIMEOUT = 90000;
+
+    /**
+     * @param {Object} candidate - выбранная раздача (из pick)
+     * @param {Object} movie - карточка
+     * @param {Object} want - {season, episode} или null для фильма
+     * @param {Object} handlers - {onStart, onError}
+     */
+    function run(candidate, movie, want, handlers) {
+      handlers = handlers || {};
+      if (!Lampa.Torserver.url()) return fail(handlers, 'no_server');
+      var files = [];
+      var finished = false;
+      var settle = null;
+      var timeout = null;
+      function listener(e) {
+        if (e.type === 'render') {
+          files.push(e);
+          clearTimeout(settle);
+          settle = setTimeout(choose, SETTLE);
+        }
+
+        // пользователь закрыл список сам — больше не вмешиваемся
+        if (e.type === 'list_close') stop();
+      }
+      function choose() {
+        if (finished) return;
+        var target = want ? findEpisode(files, want) : findBiggest(files);
+
+        // Нужной серии в раздаче нет. Список уже открыт — пусть выбирает сам,
+        // это честнее, чем запустить наугад другую серию.
+        if (!target) {
+          stop();
+          return fail(handlers, want ? 'no_episode' : 'no_file');
+        }
+        finished = true;
+        stop();
+        if (handlers.onStart) handlers.onStart(target.element);
+        target.item.trigger('hover:enter');
+      }
+      function stop() {
+        clearTimeout(settle);
+        clearTimeout(timeout);
+        Lampa.Listener.remove('torrent_file', listener);
+      }
+      Lampa.Listener.follow('torrent_file', listener);
+      timeout = setTimeout(function () {
+        if (finished) return;
+        stop();
+        fail(handlers, 'timeout');
+      }, TIMEOUT);
+
+      // poster нужен, чтобы торрент в TorrServer выглядел как карточка
+      candidate.raw.poster = movie.img;
+      Lampa.Torrent.start(candidate.raw, movie);
+    }
+
+    /** Файл нужной серии */
+    function findEpisode(files, want) {
+      return files.find(function (e) {
+        return e.element && e.element.season === want.season && e.element.episode === want.episode;
+      });
+    }
+
+    /**
+     * Для фильма берём самый большой файл: в раздачах рядом лежат трейлеры и семплы.
+     */
+    function findBiggest(files) {
+      var best = null;
+      files.forEach(function (e) {
+        if (!e.element) return;
+        if (!best || (e.element.length || 0) > (best.element.length || 0)) best = e;
+      });
+      return best;
+    }
+    function fail(handlers, reason) {
+      if (handlers.onError) handlers.onError(reason);
+    }
+    var run$1 = {
+      run: run
+    };
+
+    /**
      * «Продолжить» — кнопка на карточке, запускающая нужную серию из торрента
      * без ручного выбора раздачи и файла.
      */
 
-    var BUTTON_ICON = "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n    <path d=\"M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z\" stroke=\"currentColor\" stroke-width=\"2.5\"/>\n    <path d=\"M10 8.5L15.5 12L10 15.5V8.5Z\" fill=\"currentColor\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linejoin=\"round\"/>\n</svg>";
+    /**
+     * Круговая стрелка с треугольником внутри — «продолжить просмотр».
+     * Стиль штатных кнопок: контур currentColor, толщина 2.5, высота 30.
+     */
+    var BUTTON_ICON = "<svg width=\"30\" height=\"30\" viewBox=\"0 0 30 30\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n    <path d=\"M26.5 15C26.5 21.3513 21.3513 26.5 15 26.5C8.64873 26.5 3.5 21.3513 3.5 15C3.5 8.64873 8.64873 3.5 15 3.5C18.7014 3.5 21.9946 5.24784 24.1 7.96\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\"/>\n    <path d=\"M25.2 2.8V9H19\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n    <path d=\"M12.8 10.7L19.4 15L12.8 19.3V10.7Z\" fill=\"currentColor\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linejoin=\"round\"/>\n</svg>";
+
+    /**
+     * Подпись рисуем сами: штатный data-subtitle виден только в выпадающем списке
+     * кнопки «Смотреть», а нам нужно показать серию прямо на кнопке.
+     */
+    var BUTTON_STYLE = "<style id=\"continue-style\">\n    .full-start-new__buttons .full-start__button span.button--continue__hint{\n        display: inline-block !important;\n        margin-left: .7em;\n        font-size: 1.1em;\n        white-space: nowrap;\n    }\n</style>";
     function startPlugin() {
       if (window.plugin_continue_ready) return;
       window.plugin_continue_ready = true;
+      if (!document.getElementById('continue-style')) $('body').append(BUTTON_STYLE);
       Lampa.Listener.follow('full', function (e) {
         if (e.type !== 'complite') return;
         try {
           addButton(e);
         } catch (err) {
           console.error('Continue', 'button error:', err);
+        }
+      });
+
+      // Возврат на карточку после просмотра: событие 'full' повторно не приходит,
+      // а серия уже другая — подпись надо пересчитать, иначе она врёт.
+      Lampa.Listener.follow('activity', function (e) {
+        if (e.type !== 'start' || e.component !== 'full') return;
+        try {
+          var object = e.object;
+          var card = object.activity && object.activity.card || object.card || object.movie;
+          if (card && object.activity) hint(card, object.activity.render());
+        } catch (err) {
+          console.error('Continue', 'refresh error:', err);
         }
       });
     }
@@ -553,24 +841,474 @@
       if (!row.length || row.find('.button--continue').length) return;
       var button = $("<div class=\"full-start__button selector button--continue\" data-subtitle=\"\">\n        ".concat(BUTTON_ICON, "\n        <span>").concat(Lampa.Lang.translate('continue_button'), "</span>\n    </div>"));
       button.on('hover:enter', function () {
-        onEnter(card, e.object);
+        return onEnter(card);
       });
       row.prepend(button);
+      hint(card, root);
     }
 
     /**
-     * Пока заглушка: показываем, что плагин видит карточку.
-     * Логика подбора раздачи появится следующим шагом.
+     * Подпись на кнопке: какая серия включится.
+     *
+     * Ищем кнопку в актуальном DOM, а не держим ссылку: за время запроса за сериями
+     * карточка могла перерисоваться, и старый объект остался бы вне документа.
+     */
+    function hint(card, root) {
+      describe(card, function (decision) {
+        var live = root.find('.button--continue');
+        if (!live.length) return;
+        var text = resume.label(decision, Lampa.Lang.translate);
+        live.find('.button--continue__hint').remove();
+        if (!text) return;
+        live.attr('data-subtitle', text);
+        live.append("<span class=\"button--continue__hint\">".concat(text, "</span>"));
+      });
+    }
+
+    /**
+     * Что произойдёт по нажатию. Нужно и для подписи, и для самого запуска.
+     */
+    function describe(card, done) {
+      if (!isSeries(card)) {
+        return done(resume.decideMovie(Lampa.Timeline.view(Lampa.Utils.hash(card.original_title))));
+      }
+      episodes(card, function (list) {
+        done(resume.decideSeries(list, function (season, episode) {
+          return Lampa.Timeline.watchedEpisode(card, season, episode, true);
+        }));
+      });
+    }
+    function isSeries(card) {
+      return !!(card.number_of_seasons || card.original_name || card.first_air_date);
+    }
+
+    /**
+     * Вышедшие серии по порядку. Невышедшие отбрасываем: предлагать серию,
+     * которой ещё нет, бессмысленно.
+     */
+    function episodes(card, done) {
+      var numbers = [];
+      for (var i = 1; i <= (card.number_of_seasons || 1); i++) numbers.push(i);
+      Lampa.Api.seasons(card, numbers, function (data) {
+        var out = [];
+        var now = Date.now();
+        numbers.forEach(function (number) {
+          var season = data[number];
+          if (!season || !season.episodes) return;
+          season.episodes.forEach(function (ep) {
+            var air = ep.air_date ? new Date(ep.air_date).getTime() : 0;
+            if (air && air > now) return;
+            out.push({
+              season_number: ep.season_number || number,
+              episode_number: ep.episode_number
+            });
+          });
+        });
+        done(out);
+      });
+    }
+
+    /**
+     * Нажатие: решаем что смотреть, ищем раздачу, запускаем.
      */
     function onEnter(card) {
-      var is_tv = !!(card.number_of_seasons || card.first_air_date);
-      Lampa.Noty.show((is_tv ? 'Сериал' : 'Фильм') + ': ' + (card.title || card.name) + ' / ' + (card.original_title || card.original_name) + ' (' + ((card.release_date || card.first_air_date || '----') + '').slice(0, 4) + ')');
+      if (!Lampa.Storage.field('parser_use')) return notice('continue_error_noparser');
+      Lampa.Loading.start(function () {
+        Lampa.Loading.stop();
+      });
+      describe(card, function (decision) {
+        search(card, function (results) {
+          var filter = cardFilter(card);
+          var params = {
+            season: decision.season,
+            episode: decision.episode,
+            no_cam: Lampa.Storage.field('continue_no_cam') !== false,
+            last: lastRelease(card)
+          };
+          var out = pick$1.pick(results, pick$1.context(card, filter, params));
+          Lampa.Loading.stop();
+          if (!out.list.length) return nothingFound(card, out);
+          if (needAsk(card, out)) return choose(card, out, decision);
+          launch(card, out.list[0], decision);
+        }, function () {
+          Lampa.Loading.stop();
+          notice('continue_error_search');
+        });
+      });
+    }
+
+    /**
+     * Поиск раздач. Комбинация запроса собирается так же, как это делает
+     * штатная кнопка торрентов, чтобы результаты совпадали с привычными.
+     */
+    function search(card, done, fail) {
+      var year = ((card.first_air_date || card.release_date || '0000') + '').slice(0, 4);
+      var combinations = {
+        'df': card.original_title,
+        'df_year': card.original_title + ' ' + year,
+        'df_lg': card.original_title + ' ' + card.title,
+        'df_lg_year': card.original_title + ' ' + card.title + ' ' + year,
+        'lg': card.title,
+        'lg_year': card.title + ' ' + year,
+        'lg_df': card.title + ' ' + card.original_title,
+        'lg_df_year': card.title + ' ' + card.original_title + ' ' + year
+      };
+      var title = card.title || card.name;
+      var original = card.original_title || card.original_name;
+      Lampa.Parser.get({
+        movie: card,
+        search: combinations[Lampa.Storage.field('parse_lang')] || original || title,
+        search_one: title,
+        search_two: original,
+        page: 1
+      }, function (data) {
+        return done(data && data.Results || []);
+      }, fail);
+    }
+
+    /**
+     * Спрашивать ли пользователя.
+     *
+     * Смысл кнопки в том, чтобы не спрашивать. Вопрос уместен ровно в двух случаях:
+     * пришлось нарушить заданные фильтры, либо это первое знакомство с тайтлом
+     * и вариантов озвучки действительно несколько.
+     */
+    function needAsk(card, out) {
+      if (!out.confident) return true;
+
+      // продолжаем ту же раздачу, из которой смотрели прошлую серию
+      if (out.continues) return false;
+
+      // уже запускали этот тайтл — предпочтение известно
+      if (lastRelease(card)) return false;
+      return out.voices.length > 1;
+    }
+
+    /** Ключ карточки, общий для фильтров и нашего хранилища */
+    function cardID(card) {
+      return card.id + ':' + (isSeries(card) ? 'tv' : 'movie');
+    }
+
+    /**
+     * Чем смотрели прошлый раз: студия и качество.
+     *
+     * Нужно на случай, когда прежней раздачи в выдаче уже нет — тогда берём
+     * максимально похожую, а не начинаем выбор заново.
+     */
+    function lastRelease(card) {
+      var all = Lampa.Storage.cache('continue_last', 150, {});
+      var rec = all[cardID(card)];
+      if (!rec) return null;
+      return {
+        voice: rec.v || null,
+        resolution: rec.q || null
+      };
+    }
+    function rememberRelease(card, cand) {
+      var all = Lampa.Storage.cache('continue_last', 150, {});
+      var cid = cardID(card);
+
+      // перекладываем в конец: Storage.cache вытесняет по порядку вставки
+      delete all[cid];
+      all[cid] = {
+        v: cand.parsed.voices[0] || null,
+        q: cand.parsed.resolution || null,
+        t: Date.now()
+      };
+      Lampa.Storage.set('continue_last', all);
+    }
+
+    /**
+     * Фильтры именно этой карточки — те же, что показывает штатный экран торрентов.
+     */
+    function cardFilter(card) {
+      var all = Lampa.Storage.cache('torrents_filter_data', 500, {});
+      var cid = card.id + ':' + (isSeries(card) ? 'tv' : 'movie');
+      return all[cid] || Lampa.Storage.get('torrents_filter', '{}') || {};
+    }
+
+    /**
+     * Ничего не подошло. Молчать нельзя — объясняем причину и даём выход
+     * на обычный список раздач.
+     */
+    function nothingFound(card, out) {
+      var text = out.reason === 'only_cam' ? Lampa.Lang.translate('continue_only_cam') : Lampa.Lang.translate('continue_not_found');
+      Lampa.Select.show({
+        title: Lampa.Lang.translate('continue_button'),
+        items: [{
+          title: text,
+          subtitle: Lampa.Lang.translate('continue_open_torrents'),
+          open_torrents: true
+        }, {
+          title: Lampa.Lang.translate('continue_cancel')
+        }],
+        onSelect: function onSelect(item) {
+          Lampa.Controller.toggle('full_start');
+          if (item.open_torrents) openTorrents(card);
+        },
+        onBack: function onBack() {
+          return Lampa.Controller.toggle('full_start');
+        }
+      });
+    }
+
+    /**
+     * Уверенности нет — короткий список лучших вариантов.
+     * Пять строк на пульте пролистываются быстрее, чем сотня раздач с фильтрами.
+     */
+    function choose(card, out, decision) {
+      var top = out.list.slice(0, 5);
+      var items = top.map(function (cand) {
+        return {
+          title: candidateTitle(cand),
+          subtitle: candidateSubtitle(cand, decision),
+          cand: cand
+        };
+      });
+
+      // Одинаковые заголовки выбирать невозможно — различаем их трекером
+      items.forEach(function (item, i) {
+        var same = items.some(function (other, j) {
+          return j !== i && other.title === item.title;
+        });
+        if (same && top[i].raw.Tracker) item.subtitle = top[i].raw.Tracker + ' · ' + item.subtitle;
+      });
+      items.push({
+        title: Lampa.Lang.translate('continue_open_torrents'),
+        open_torrents: true
+      });
+      Lampa.Select.show({
+        title: Lampa.Lang.translate('continue_choose'),
+        items: items,
+        onSelect: function onSelect(item) {
+          Lampa.Controller.toggle('full_start');
+          if (item.open_torrents) return openTorrents(card);
+          rememberVoice(card, item.cand);
+          launch(card, item.cand, decision);
+        },
+        onBack: function onBack() {
+          return Lampa.Controller.toggle('full_start');
+        }
+      });
+    }
+    function quality(cand) {
+      var res = cand.parsed.resolution;
+      var name = res === 2160 ? '4K' : res ? res + 'p' : Lampa.Lang.translate('continue_quality_unknown');
+      if (cand.parsed.hdr) name += ' HDR';
+      if (cand.parsed.dv) name += ' DV';
+      return name;
+    }
+
+    /** Человекочитаемые названия источников */
+    var SOURCE_NAMES = {
+      bluray: 'Blu-ray',
+      webdl: 'WEB-DL',
+      bdrip: 'BDRip',
+      webrip: 'WEBRip',
+      webdlrip: 'WEB-DLRip',
+      hdrip: 'HDRip',
+      hdtv: 'HDTV',
+      dvdrip: 'DVDRip',
+      dvd: 'DVD',
+      cam: 'CAMRip',
+      ts: 'TS',
+      tc: 'TC',
+      screener: 'Screener'
+    };
+
+    /**
+     * Заголовок строки: качество и озвучка — то, по чему реально выбирают.
+     * Если студий в названии нет, показываем язык или источник, иначе строки
+     * получаются одинаковыми и выбирать не из чего.
+     */
+    function candidateTitle(cand) {
+      var parts = [quality(cand)];
+      var voices = cand.parsed.voices;
+      if (voices.length) parts.push(voices.slice(0, 3).join(', '));else {
+        var langs = cand.parsed.langs.map(function (l) {
+          return Lampa.Lang.translate('continue_lang_' + l);
+        }).filter(Boolean);
+        if (langs.length) parts.push(langs.join(', '));else if (SOURCE_NAMES[cand.parsed.source]) parts.push(SOURCE_NAMES[cand.parsed.source]);
+      }
+      return parts.join(' · ');
+    }
+
+    /**
+     * Подзаголовок: скорость, размер, источник и предупреждения.
+     */
+    function candidateSubtitle(cand, decision) {
+      var parts = [Lampa.Lang.translate('continue_seeds') + ': ' + cand.seeders];
+      if (cand.raw.size) parts.push(cand.raw.size);
+
+      // источник дублируем в подзаголовок, только если он не ушёл в заголовок
+      if (cand.parsed.voices.length && SOURCE_NAMES[cand.parsed.source]) parts.push(SOURCE_NAMES[cand.parsed.source]);
+      if (cand.viewed) parts.push(Lampa.Lang.translate('continue_seen'));
+
+      // раздача есть, но нужной серии в ней может не быть
+      if (decision && decision.episode && cand.parsed.episodes) {
+        var has = decision.episode >= cand.parsed.episodes[0] && decision.episode <= cand.parsed.episodes[1];
+        if (!has) parts.push(Lampa.Lang.translate('continue_no_episode_hint'));
+      }
+      return parts.join(' · ');
+    }
+
+    /**
+     * Выбор пользователя сохраняем в тот же фильтр карточки, которым пользуется
+     * штатный экран: тогда плагин и обычный список не расходятся, а выбор
+     * уезжает в облако вместе с остальными настройками.
+     */
+    function rememberVoice(card, cand) {
+      if (!cand.parsed.voices.length) return;
+      var all = Lampa.Storage.cache('torrents_filter_data', 500, {});
+      var cid = card.id + ':' + (isSeries(card) ? 'tv' : 'movie');
+      var filter = all[cid] || {};
+      filter.voice = [cand.parsed.voices[0]];
+      delete all[cid];
+      all[cid] = filter;
+      Lampa.Storage.set('torrents_filter_data', all);
+    }
+    function launch(card, cand, decision) {
+      if (decision.mode === 'done') notice('continue_all_watched');
+      rememberRelease(card, cand);
+      var want = decision.season && decision.episode ? {
+        season: decision.season,
+        episode: decision.episode
+      } : null;
+      run$1.run(cand, card, want, {
+        onStart: function onStart() {
+          return markViewed(cand);
+        },
+        onError: function onError(reason) {
+          var keys = {
+            no_server: 'continue_error_noserver',
+            no_episode: 'continue_error_noepisode',
+            no_file: 'continue_error_nofile',
+            timeout: 'continue_error_timeout'
+          };
+          notice(keys[reason] || 'continue_not_found');
+        }
+      });
+    }
+    function openTorrents(card) {
+      Lampa.Activity.push({
+        url: '',
+        title: Lampa.Lang.translate('title_torrents'),
+        component: 'torrents',
+        search: card.title || card.name,
+        search_one: card.title || card.name,
+        search_two: card.original_title || card.original_name,
+        movie: card,
+        page: 1
+      });
+    }
+    function notice(key) {
+      Lampa.Noty.show(Lampa.Lang.translate(key));
     }
     Lampa.Lang.add({
       continue_button: {
-        ru: 'Продолжить',
-        en: 'Continue',
-        uk: 'Продовжити'
+        ru: 'Смотреть',
+        en: 'Watch',
+        uk: 'Дивитися'
+      },
+      continue_episode: {
+        ru: 'серия',
+        en: 'episode',
+        uk: 'серія'
+      },
+      continue_choose: {
+        ru: 'Выберите раздачу',
+        en: 'Choose a release',
+        uk: 'Оберіть роздачу'
+      },
+      continue_not_found: {
+        ru: 'Подходящих раздач не найдено',
+        en: 'No suitable releases found',
+        uk: 'Відповідних роздач не знайдено'
+      },
+      continue_only_cam: {
+        ru: 'Есть только экранки',
+        en: 'Only cam rips available',
+        uk: 'Є лише екранки'
+      },
+      continue_open_torrents: {
+        ru: 'Открыть список раздач',
+        en: 'Open torrent list',
+        uk: 'Відкрити список роздач'
+      },
+      continue_cancel: {
+        ru: 'Отмена',
+        en: 'Cancel',
+        uk: 'Скасувати'
+      },
+      continue_seeds: {
+        ru: 'Раздают',
+        en: 'Seeds',
+        uk: 'Роздають'
+      },
+      continue_quality_unknown: {
+        ru: 'Качество не указано',
+        en: 'Quality unknown',
+        uk: 'Якість не вказана'
+      },
+      continue_seen: {
+        ru: 'уже смотрели',
+        en: 'watched before',
+        uk: 'вже дивилися'
+      },
+      continue_no_episode_hint: {
+        ru: 'серии может не быть',
+        en: 'episode may be missing',
+        uk: 'серії може не бути'
+      },
+      continue_lang_ru: {
+        ru: 'Русский',
+        en: 'Russian',
+        uk: 'Російська'
+      },
+      continue_lang_uk: {
+        ru: 'Украинский',
+        en: 'Ukrainian',
+        uk: 'Українська'
+      },
+      continue_lang_en: {
+        ru: 'Английский',
+        en: 'English',
+        uk: 'Англійська'
+      },
+      continue_all_watched: {
+        ru: 'Все вышедшие серии просмотрены, включаю последнюю',
+        en: 'All aired episodes watched, playing the last one',
+        uk: 'Усі серії переглянуті, вмикаю останню'
+      },
+      continue_error_noserver: {
+        ru: 'Не настроен TorrServer',
+        en: 'TorrServer is not configured',
+        uk: 'Не налаштовано TorrServer'
+      },
+      continue_error_noparser: {
+        ru: 'Не включён поиск торрентов',
+        en: 'Torrent search is disabled',
+        uk: 'Не увімкнено пошук торентів'
+      },
+      continue_error_search: {
+        ru: 'Поиск раздач не отвечает',
+        en: 'Torrent search failed',
+        uk: 'Пошук роздач не відповідає'
+      },
+      continue_error_noepisode: {
+        ru: 'В раздаче нет нужной серии, выберите файл вручную',
+        en: 'The release has no such episode, pick a file manually',
+        uk: 'У роздачі немає потрібної серії, оберіть файл вручну'
+      },
+      continue_error_nofile: {
+        ru: 'В раздаче не нашлось видеофайла',
+        en: 'No video file in the release',
+        uk: 'У роздачі не знайдено відеофайл'
+      },
+      continue_error_timeout: {
+        ru: 'Раздача не отвечает, попробуйте другую',
+        en: 'The release is not responding, try another',
+        uk: 'Роздача не відповідає, спробуйте іншу'
       }
     });
     if (window.appready) startPlugin();else {
@@ -582,11 +1320,15 @@
     // доступ для отладки: позволяет прогонять парсер и отбор на живой выдаче из консоли
     window.__continue = {
       parse: parse,
-      pick: pick$1
+      pick: pick$1,
+      resume: resume,
+      run: run$1
     };
     var _continue = {
       parse: parse,
-      pick: pick$1
+      pick: pick$1,
+      resume: resume,
+      run: run$1
     };
 
     return _continue;
