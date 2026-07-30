@@ -18,7 +18,7 @@
      */
     function parse(title) {
       var raw = (title || '') + '';
-      var norm = normalize(raw);
+      var norm = normalize$1(raw);
       var source = detectSource(norm);
       return {
         source: source,
@@ -40,7 +40,7 @@
      * Приводим к нижнему регистру и чиним кириллицу в номерах.
      * В русских раздачах пишут '03х01' и '1080р' кириллическими буквами.
      */
-    function normalize(title) {
+    function normalize$1(title) {
       return (title + '').toLowerCase().replace(/(\d)\s*х\s*(\d)/g, '$1x$2') // 03х01 -> 03x01
       .replace(/(\d{3,4})\s*р\b/g, '$1p'); // 1080р -> 1080p
     }
@@ -243,6 +243,287 @@
     }
 
     /**
+     * Выбор раздачи: жёсткие отсечки, затем скоринг.
+     *
+     * Задача — не «найти лучшее качество», а «не запустить не то».
+     * На живой выдаче ловушек больше, чем кажется: по запросу «Moana» приходят
+     * три разных фильма, у сериала в топе по сидерам стоят чужие сезоны,
+     * а самая качественная 4K-раздача бывает с нулём раздающих.
+     */
+
+    /** Разрешение в ранг. Неизвестное разрешение — не повод считать раздачу плохой. */
+    var RESOLUTION_TIER = {
+      2160: 4,
+      1080: 3,
+      720: 2,
+      480: 1
+    };
+
+    /** Порядок ослабления фильтров, когда после отсечек не осталось никого */
+    var RELAX_ORDER = ['voice', 'dv', 'hdr', 'sub', 'quality'];
+
+    /** Разрешения фильтра Lampa в числа */
+    var FILTER_QUALITY = {
+      '4k': 2160,
+      '1080p': 1080,
+      '720p': 720
+    };
+
+    /**
+     * Результат поиска к единому виду.
+     * У JacRed есть готовый info, у настоящего Jackett — только заголовок,
+     * поэтому опираемся на разбор названия, а info используем как уточнение.
+     */
+    function normalize(result) {
+      var info = result.info || {};
+      var parsed = parse(result.Title);
+
+      // info.quality — это разрешение, а не тип источника: CAMRip [1080p] придёт
+      // с quality 1080. Поэтому источник берём только из названия.
+      if (parsed.resolution === null && info.quality) parsed.resolution = info.quality;
+      if (!parsed.seasons.length && info.seasons && info.seasons.length) parsed.seasons = info.seasons;
+      if (!parsed.voices.length && info.voices && info.voices.length) parsed.voices = info.voices;
+      return {
+        raw: result,
+        title: result.Title,
+        seeders: parseInt(result.Seeders) || 0,
+        size: parseInt(result.Size) || 0,
+        viewed: !!result.viewed,
+        parsed: parsed
+      };
+    }
+
+    /**
+     * Убираем всё, что мешает сравнению названий: пунктуацию, латиницу вперемешку
+     * с кириллицей не трогаем — сравниваем как есть, в нижнем регистре.
+     */
+    function simplify(str) {
+      return ((str || '') + '').toLowerCase().replace(/[^a-zа-яё0-9]+/g, ' ').trim();
+    }
+
+    /**
+     * Тот ли это фильм. Первая и главная проверка.
+     *
+     * Поиск ищет по строке, поэтому по «Moana» приходят и «Moana 2», и «Moana» 2016.
+     * Отличить их можно только по году: название сиквела содержит название оригинала.
+     *
+     * Для сериала год не работает: в карточке стоит дата премьеры сериала, а раздача
+     * несёт год своего сезона — у трёхлетнего сериала это расхождение в несколько лет.
+     * Там отсекаем по номеру сезона.
+     */
+    function isSameTitle(cand, ctx) {
+      var card_year = ctx.is_tv ? null : ctx.year;
+      var year = cand.parsed.year;
+
+      // Год известен с обеих сторон — сравниваем. Допуск в год: дата релиза
+      // и дата раздачи расходятся на границе года.
+      if (card_year && year && Math.abs(year - card_year) > 1) return false;
+      var title = simplify(cand.title);
+      var names = ctx.names.map(simplify).filter(function (n) {
+        return n.length > 1;
+      });
+      if (!names.length) return true;
+      return names.some(function (name) {
+        return title.indexOf(name) >= 0;
+      });
+    }
+
+    /**
+     * Жёсткие отсечки. relax — множество ослабленных ограничений.
+     */
+    function hardFilter(list, ctx, relax) {
+      return list.filter(function (cand) {
+        var p = cand.parsed;
+
+        // мёртвая раздача бесполезна, каким бы ни было качество
+        if (!cand.seeders) return false;
+        if (!isSameTitle(cand, ctx)) return false;
+        if (ctx.no_cam && p.is_cam) return false;
+
+        // нужный сезон обязан быть в раздаче
+        if (ctx.season && p.seasons.length && p.seasons.indexOf(ctx.season) === -1) return false;
+        if (relax.indexOf('quality') === -1 && ctx.max_resolution && p.resolution) {
+          if (p.resolution > ctx.max_resolution) return false;
+        }
+        if (relax.indexOf('hdr') === -1 && ctx.no_hdr && p.hdr) return false;
+        if (relax.indexOf('dv') === -1 && ctx.no_dv && p.dv) return false;
+        if (relax.indexOf('voice') === -1 && ctx.voice) {
+          if (p.voices.indexOf(ctx.voice) === -1) return false;
+        }
+
+        // Язык проверяем только когда он в названии указан: у большинства раздач
+        // языковых пометок нет вовсе, и отсекать их было бы неверно.
+        if (ctx.langs.length && p.langs.length) {
+          if (!p.langs.some(function (l) {
+            return ctx.langs.indexOf(l) >= 0;
+          })) return false;
+        }
+        return true;
+      });
+    }
+
+    /**
+     * Оценка кандидата. Веса подобраны так, чтобы количество раздающих
+     * не могло перебить качество источника: 500 сидеров не делают экранку лучше рипа.
+     */
+    function score(cand, ctx) {
+      var p = cand.parsed;
+      var s = 0;
+      s += (RESOLUTION_TIER[p.resolution] || 0) * 100;
+      s += p.source_rank;
+
+      // та же раздача, что смотрели раньше — сильный сигнал
+      if (cand.viewed) s += 150;
+      if (ctx.voice && p.voices.indexOf(ctx.voice) >= 0) s += 200;
+
+      // студия, которую обычно смотрит пользователь
+      if (ctx.voice_rating) {
+        p.voices.forEach(function (v) {
+          if (ctx.voice_rating[v]) s += 80;
+        });
+      }
+
+      // раздача содержит нужную серию
+      if (ctx.episode && p.episodes) {
+        if (ctx.episode >= p.episodes[0] && ctx.episode <= p.episodes[1]) s += 50;
+      }
+      s += Math.min(cand.seeders, 100) * 0.5;
+      return s;
+    }
+
+    /**
+     * Основная точка входа.
+     *
+     * @param {Array} results - результаты Lampa.Parser.get
+     * @param {Object} ctx - {names, year, season, episode, voice, lang, max_resolution,
+     *                        no_hdr, no_dv, no_cam, voice_rating}
+     * @returns {{list: Array, relaxed: string[], confident: boolean, reason: string}}
+     */
+    function pick(results, ctx) {
+      var all = (results || []).map(normalize);
+      var relax = [];
+      var list = hardFilter(all, ctx, relax);
+
+      // Ослабляем по одному, пока кто-нибудь не найдётся.
+      // Иначе кнопка «умирает» на сериале, который выбранная студия не озвучивает.
+      for (var i = 0; i < RELAX_ORDER.length && !list.length; i++) {
+        relax = RELAX_ORDER.slice(0, i + 1);
+        list = hardFilter(all, ctx, relax);
+      }
+      if (!list.length) {
+        return {
+          list: [],
+          relaxed: relax,
+          confident: false,
+          reason: onlyCamAround(all, ctx) ? 'only_cam' : 'not_found'
+        };
+      }
+      list.forEach(function (cand) {
+        cand.score = score(cand, ctx);
+      });
+      list.sort(function (a, b) {
+        return b.score - a.score;
+      });
+      return {
+        list: list,
+        relaxed: relax,
+        confident: isConfident(list, relax),
+        reason: ''
+      };
+    }
+
+    /**
+     * Отсеклись все, но по названию и году что-то было — значит остались экранки.
+     * Об этом надо сказать честно, а не молча запускать.
+     */
+    function onlyCamAround(all, ctx) {
+      var same = all.filter(function (cand) {
+        return cand.seeders && isSameTitle(cand, ctx);
+      });
+      return same.length > 0 && same.every(function (cand) {
+        return cand.parsed.is_cam;
+      });
+    }
+
+    /**
+     * Уверенность в выборе. Если лидер оторвался меньше чем на 15%,
+     * либо пришлось ослабить перевод или качество — лучше спросить.
+     */
+    function isConfident(list, relax) {
+      if (relax.indexOf('voice') >= 0 || relax.indexOf('quality') >= 0) return false;
+      if (list.length < 2) return true;
+      var top = list[0].score;
+      var second = list[1].score;
+      if (top <= 0) return false;
+      return (top - second) / top >= 0.15;
+    }
+
+    /**
+     * Контекст из карточки и фильтров Lampa.
+     *
+     * Фильтры берём те же, что у штатного экрана торрентов: они уже хранятся
+     * отдельно для каждой карточки и синхронизируются через аккаунт.
+     */
+    function context(card, filter, params) {
+      filter = filter || {};
+      params = params || {};
+      var names = [card.original_title, card.original_name, card.title, card.name].filter(Boolean);
+      var year = ((card.release_date || card.first_air_date || '') + '').slice(0, 4);
+      var quality = toArray(filter.quality).map(function (q) {
+        return FILTER_QUALITY[q];
+      }).filter(Boolean);
+      return {
+        names: names,
+        year: parseInt(year) || null,
+        is_tv: !!(card.number_of_seasons || card.original_name || card.first_air_date),
+        season: params.season || null,
+        episode: params.episode || null,
+        voice: toArray(filter.voice)[0] || null,
+        langs: langCodes(filter.lang),
+        max_resolution: quality.length ? Math.max.apply(null, quality) : null,
+        no_hdr: filter.hdr === 'no',
+        no_dv: filter.dv === 'no',
+        no_cam: params.no_cam !== false,
+        voice_rating: params.voice_rating || null
+      };
+    }
+    function toArray(value) {
+      if (!value) return [];
+      return Array.isArray(value) ? value : [value];
+    }
+
+    /** Языки, которые вообще умеет различать разбор названия */
+    var KNOWN_LANGS = ['ru', 'uk', 'en'];
+
+    /**
+     * Фильтр Lampa хранит язык переведённым названием — «Русский», «Английский».
+     * Приводим к кодам; заодно принимаем и сами коды, чтобы функцию можно было
+     * вызывать вне приложения.
+     */
+    function langCodes(values) {
+      var out = [];
+      toArray(values).forEach(function (value) {
+        var low = ((value || '') + '').toLowerCase();
+        if (KNOWN_LANGS.indexOf(low) >= 0) {
+          if (out.indexOf(low) === -1) out.push(low);
+          return;
+        }
+        if (typeof Lampa === 'undefined' || !Lampa.Lang) return;
+        KNOWN_LANGS.forEach(function (code) {
+          var name = (Lampa.Lang.translate('filter_lang_' + code) + '').toLowerCase();
+          if (name && name === low && out.indexOf(code) === -1) out.push(code);
+        });
+      });
+      return out;
+    }
+    var pick$1 = {
+      pick: pick,
+      context: context,
+      normalize: normalize,
+      score: score
+    };
+
+    /**
      * «Продолжить» — кнопка на карточке, запускающая нужную серию из торрента
      * без ручного выбора раздачи и файла.
      */
@@ -298,12 +579,14 @@
       });
     }
 
-    // доступ для отладки: позволяет прогонять парсер на живой выдаче из консоли
+    // доступ для отладки: позволяет прогонять парсер и отбор на живой выдаче из консоли
     window.__continue = {
-      parse: parse
+      parse: parse,
+      pick: pick$1
     };
     var _continue = {
-      parse: parse
+      parse: parse,
+      pick: pick$1
     };
 
     return _continue;
