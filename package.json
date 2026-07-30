@@ -1,0 +1,13 @@
+{
+    "name": "lampa-plugins",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "lint": "biome check ../lampa-source/plugins/continue ../lampa-source/plugins/manager",
+        "format": "biome check --write ../lampa-source/plugins/continue ../lampa-source/plugins/manager",
+        "test": "vitest run --root ../lampa-source plugins/continue"
+    },
+    "devDependencies": {
+        "@biomejs/biome": "^2.3.0"
+    }
+}

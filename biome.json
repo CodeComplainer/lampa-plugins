@@ -1,0 +1,46 @@
+{
+    "$schema": "https://biomejs.dev/schemas/2.5.6/schema.json",
+    "files": {
+        "includes": ["**/*.js", "!**/voices.js"]
+    },
+    "formatter": {
+        "enabled": true,
+        "indentStyle": "space",
+        "indentWidth": 4,
+        "lineWidth": 110
+    },
+    "javascript": {
+        "formatter": {
+            "semicolons": "asNeeded",
+            "quoteStyle": "single",
+            "trailingCommas": "none",
+            "arrowParentheses": "always",
+            "bracketSpacing": false
+        },
+        "globals": ["Lampa", "$", "window", "document", "console", "setTimeout", "clearTimeout", "setInterval"]
+    },
+    "linter": {
+        "enabled": true,
+        "rules": {
+            "recommended": true,
+            "style": {
+                "useConst": "off",
+                "noParameterAssign": "off",
+                "useTemplate": "off"
+            },
+            "suspicious": {
+                "noAssignInExpressions": "off"
+            },
+            "complexity": {
+                "useOptionalChain": "off"
+            }
+        }
+    },
+    "assist": {
+        "actions": {
+            "source": {
+                "organizeImports": "off"
+            }
+        }
+    }
+}

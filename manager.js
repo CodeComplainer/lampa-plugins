@@ -108,7 +108,7 @@
           // экран настроек может быть уже закрыт — обновление тогда не нужно
           try {
             Lampa.Settings.update();
-          } catch (e) {}
+          } catch (_unused) {}
         }
       });
       Lampa.SettingsApi.addParam({

@@ -110,14 +110,14 @@
      */
     function detectSeason(norm) {
       var m;
-      if (m = norm.match(/\b(\d{1,2})x\d{1,3}/)) return parseInt(m[1]);
-      if (m = norm.match(/\bs(\d{1,2})e\d{1,3}/)) return parseInt(m[1]);
-      if (m = norm.match(/(\d{1,2})\s*сезон/)) return parseInt(m[1]);
-      if (m = norm.match(/сезон[:\s]*(\d{1,2})/)) return parseInt(m[1]);
+      if (m = norm.match(/\b(\d{1,2})x\d{1,3}/)) return parseInt(m[1], 10);
+      if (m = norm.match(/\bs(\d{1,2})e\d{1,3}/)) return parseInt(m[1], 10);
+      if (m = norm.match(/(\d{1,2})\s*сезон/)) return parseInt(m[1], 10);
+      if (m = norm.match(/сезон[:\s]*(\d{1,2})/)) return parseInt(m[1], 10);
       // аниме пишут номер сезона как [ТВ-4] или [TV-2].
       // Границу \b использовать нельзя: кириллица не входит в \w
-      if (m = norm.match(/(?:^|[^a-zа-яё])(?:тв|tv)\s*-\s*(\d{1,2})\b/)) return parseInt(m[1]);
-      if (m = norm.match(/\bs(\d{1,2})\b/)) return parseInt(m[1]);
+      if (m = norm.match(/(?:^|[^a-zа-яё])(?:тв|tv)\s*-\s*(\d{1,2})\b/)) return parseInt(m[1], 10);
+      if (m = norm.match(/\bs(\d{1,2})\b/)) return parseInt(m[1], 10);
       return null;
     }
 
@@ -125,8 +125,8 @@
     function detectSeasons(norm) {
       var range = norm.match(/\bs(\d{1,2})\s*-\s*s?(\d{1,2})\b/);
       if (range) {
-        var from = parseInt(range[1]);
-        var to = parseInt(range[2]);
+        var from = parseInt(range[1], 10);
+        var to = parseInt(range[2], 10);
         var list = [];
         for (var i = from; i <= to; i++) list.push(i);
         return list;
@@ -141,31 +141,31 @@
     function detectEpisodes(norm) {
       var m;
       if (m = norm.match(/\b\d{1,2}x(\d{1,3})(?:\s*-\s*(\d{1,3}))?/)) {
-        return [parseInt(m[1]), parseInt(m[2] || m[1])];
+        return [parseInt(m[1], 10), parseInt(m[2] || m[1], 10)];
       }
       if (m = norm.match(/\bs\d{1,2}e(\d{1,3})(?:\s*-\s*(?:e)?(\d{1,3}))?/)) {
-        return [parseInt(m[1]), parseInt(m[2] || m[1])];
+        return [parseInt(m[1], 10), parseInt(m[2] || m[1], 10)];
       }
 
       // 'E1-12' без сезона — так подписывают аниме и дорамы
       if (m = norm.match(/(?:^|[^a-zа-яё0-9])e(\d{1,3})\s*-\s*(?:e)?(\d{1,3})\b/)) {
-        return [parseInt(m[1]), parseInt(m[2])];
+        return [parseInt(m[1], 10), parseInt(m[2], 10)];
       }
 
       // одиночная серия; диапазон уже разобран шаблоном выше
       if (m = norm.match(/(?:^|[^a-zа-яё0-9])e(\d{1,3})\b/)) {
-        return [parseInt(m[1]), parseInt(m[1])];
+        return [parseInt(m[1], 10), parseInt(m[1], 10)];
       }
       if (m = norm.match(/(\d{1,3})\s*-\s*(\d{1,3})\s*(?:сери|эп|из|of)/)) {
-        return [parseInt(m[1]), parseInt(m[2])];
+        return [parseInt(m[1], 10), parseInt(m[2], 10)];
       }
       if (m = norm.match(/(\d{1,3})\s*сери/)) {
-        return [parseInt(m[1]), parseInt(m[1])];
+        return [parseInt(m[1], 10), parseInt(m[1], 10)];
       }
 
       // «5 из 13 эп.», «12 of 24», «4 из ?» — сколько серий уже вышло
       if (m = norm.match(/(\d{1,3})\s*(?:из|of)\s*(?:\d{1,3}|\?)/)) {
-        return [1, parseInt(m[1])];
+        return [1, parseInt(m[1], 10)];
       }
       return null;
     }
@@ -175,9 +175,9 @@
      */
     function detectYear(norm) {
       var m;
-      if (m = norm.match(/\(((?:19|20)\d{2})\s*[-–]\s*(?:19|20)\d{2}\)/)) return parseInt(m[1]);
-      if (m = norm.match(/\(((?:19|20)\d{2})\)/)) return parseInt(m[1]);
-      if (m = norm.match(/\b((?:19|20)\d{2})\b/)) return parseInt(m[1]);
+      if (m = norm.match(/\(((?:19|20)\d{2})\s*[-–]\s*(?:19|20)\d{2}\)/)) return parseInt(m[1], 10);
+      if (m = norm.match(/\(((?:19|20)\d{2})\)/)) return parseInt(m[1], 10);
+      if (m = norm.match(/\b((?:19|20)\d{2})\b/)) return parseInt(m[1], 10);
       return null;
     }
 
@@ -286,8 +286,8 @@
       return {
         raw: result,
         title: result.Title,
-        seeders: parseInt(result.Seeders) || 0,
-        size: parseInt(result.Size) || 0,
+        seeders: parseInt(result.Seeders, 10) || 0,
+        size: parseInt(result.Size, 10) || 0,
         viewed: !!result.viewed,
         parsed: parsed
       };
@@ -457,7 +457,7 @@
         list: list,
         relaxed: relax,
         // продолжение из знакомой раздачи не требует подтверждения
-        confident: !!same || isConfident(list, relax),
+        confident: !!same || isConfident(relax),
         continues: !!same,
         voices: voiceOptions(list, 5),
         reason: ''
@@ -498,7 +498,7 @@
      * весь смысл кнопки. Спрашиваем только когда пришлось нарушить то, что
      * пользователь задал сам: перевод или качество.
      */
-    function isConfident(list, relax) {
+    function isConfident(relax) {
       return relax.indexOf('voice') === -1 && relax.indexOf('quality') === -1;
     }
 
@@ -532,7 +532,7 @@
       }).filter(Boolean);
       return {
         names: names,
-        year: parseInt(year) || null,
+        year: parseInt(year, 10) || null,
         is_tv: !!(card.number_of_seasons || card.original_name || card.first_air_date),
         season: params.season || null,
         episode: params.episode || null,
@@ -700,7 +700,7 @@
     }
     function isFuture(air_date) {
       var air = new Date(air_date).getTime();
-      return !isNaN(air) && air > Date.now();
+      return !Number.isNaN(air) && air > Date.now();
     }
 
     /**
@@ -877,11 +877,13 @@
      * кнопки «Смотреть», а нам нужно показать серию прямо на кнопке.
      */
     /**
-     * Подпись показывается всегда, а штатное название кнопки при этом прячется —
-     * иначе при фокусе Lampa раскрывает текст и строка превращается
-     * в «Смотреть · S3E5 · нет раздачи» шириной в треть экрана.
+     * Подпись показывается только при фокусе — иначе кнопка выбивается из ряда,
+     * где у остальных видны одни иконки. Штатное название при этом прячется:
+     * иначе строка вырастает в «Смотреть · S3E5 · нет раздачи».
+     *
+     * Недоступность видна без наведения — по приглушённой иконке.
      */
-    var BUTTON_STYLE = "<style id=\"continue-style\">\n    .full-start-new__buttons .full-start__button span.button--continue__hint{\n        display: inline-block !important;\n        margin-left: .7em;\n        font-size: 1.1em;\n        white-space: nowrap;\n    }\n    .full-start-new__buttons .full-start__button.button--continue.has--hint span:not(.button--continue__hint){\n        display: none !important;\n    }\n</style>";
+    var BUTTON_STYLE = "<style id=\"continue-style\">\n    .full-start-new__buttons .full-start__button span.button--continue__hint{\n        display: none;\n        margin-left: .7em;\n        font-size: 1.1em;\n        white-space: nowrap;\n    }\n    .full-start-new__buttons .full-start__button.button--continue.focus span.button--continue__hint,\n    .full-start-new__buttons .full-start__button.button--continue.hover span.button--continue__hint{\n        display: inline-block !important;\n    }\n    .full-start-new__buttons .full-start__button.button--continue.has--hint.focus span:not(.button--continue__hint),\n    .full-start-new__buttons .full-start__button.button--continue.has--hint.hover span:not(.button--continue__hint){\n        display: none !important;\n    }\n    .full-start-new__buttons .full-start__button.button--continue.is--unavailable svg{\n        opacity: .35;\n    }\n    .full-start-new__buttons .full-start__button.button--continue.is--unavailable.focus svg{\n        opacity: .55;\n    }\n</style>";
     function startPlugin() {
       if (window.plugin_continue_ready) return;
       window.plugin_continue_ready = true;
@@ -936,20 +938,19 @@
       describe(card, function (decision) {
         draw(root, resume.label(decision, Lampa.Lang.translate, formatDate));
         probeFresh(card, decision, function (available) {
-          if (available) return;
-
-          // Серия вышла по календарю, но раздачи с ней ещё нет. Честнее сказать
-          // это сразу, чем показывать номер серии и обнаруживать пустоту
-          // только после долгого поиска.
+          // Серия вышла по календарю, но раздачи с ней ещё нет. Приглушаем
+          // иконку, чтобы это читалось без наведения, а подпись объясняет
+          // причину, когда кнопка в фокусе.
           var where = resume.label(decision, Lampa.Lang.translate, formatDate);
-          draw(root, (where ? where + ' · ' : '') + Lampa.Lang.translate('continue_not_yet_released'));
+          draw(root, available ? where : (where ? where + ' · ' : '') + Lampa.Lang.translate('continue_not_yet_released'), !available);
         });
       });
-      function draw(root, text) {
+      function draw(root, text, unavailable) {
         var live = root.find('.button--continue');
         if (!live.length) return;
         live.find('.button--continue__hint').remove();
         live.toggleClass('has--hint', !!text);
+        live.toggleClass('is--unavailable', !!unavailable);
         if (!text) return;
         live.attr('data-subtitle', text);
         live.append("<span class=\"button--continue__hint\">".concat(text, "</span>"));
@@ -999,7 +1000,7 @@
     }
     function isFresh(air) {
       var time = new Date(air).getTime();
-      if (isNaN(time)) return false;
+      if (Number.isNaN(time)) return false;
       return Date.now() - time < FRESH_DAYS * 24 * 60 * 60 * 1000;
     }
 
@@ -1032,7 +1033,7 @@
     function formatDate(air) {
       try {
         return Lampa.Utils.parseTime(air)["short"];
-      } catch (e) {
+      } catch (_unused) {
         return air;
       }
     }
@@ -1120,14 +1121,14 @@
     function search(card, done, fail) {
       var year = ((card.first_air_date || card.release_date || '0000') + '').slice(0, 4);
       var combinations = {
-        'df': card.original_title,
-        'df_year': card.original_title + ' ' + year,
-        'df_lg': card.original_title + ' ' + card.title,
-        'df_lg_year': card.original_title + ' ' + card.title + ' ' + year,
-        'lg': card.title,
-        'lg_year': card.title + ' ' + year,
-        'lg_df': card.title + ' ' + card.original_title,
-        'lg_df_year': card.title + ' ' + card.original_title + ' ' + year
+        df: card.original_title,
+        df_year: card.original_title + ' ' + year,
+        df_lg: card.original_title + ' ' + card.title,
+        df_lg_year: card.original_title + ' ' + card.title + ' ' + year,
+        lg: card.title,
+        lg_year: card.title + ' ' + year,
+        lg_df: card.title + ' ' + card.original_title,
+        lg_df_year: card.title + ' ' + card.original_title + ' ' + year
       };
       var title = card.title || card.name;
       var original = card.original_title || card.original_name;
@@ -1242,7 +1243,7 @@
       });
       if (names.length > 30) {
         names.slice(30).forEach(function (name) {
-          return delete rating[name];
+          delete rating[name];
         });
       }
       Lampa.Storage.set('continue_voices', rating);
@@ -1298,7 +1299,7 @@
     }
 
     /** Смотреть сначала: первая серия первого сезона, для фильма — он сам */
-    function restart(card, decision) {
+    function restart(card) {
       var target = isSeries(card) ? {
         mode: 'first',
         season: 1,
@@ -1438,7 +1439,7 @@
     /**
      * Подзаголовок: скорость, размер, источник и предупреждения.
      */
-    function candidateSubtitle(cand, decision) {
+    function candidateSubtitle(cand) {
       var parts = [Lampa.Lang.translate('continue_seeds') + ': ' + cand.seeders];
       if (cand.raw.size) parts.push(cand.raw.size);
 
