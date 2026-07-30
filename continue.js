@@ -599,15 +599,17 @@
     /**
      * @param {Array} episodes - [{season_number, episode_number}], по порядку выхода
      * @param {Function} viewOf - (season, episode) => {percent} прогресс по серии
-     * @returns {{mode: string, season: number|null, episode: number|null, percent: number}}
+     * @param {Object} [meta] - {next: next_episode_to_air из TMDB}
+     * @returns {{mode: string, season: number|null, episode: number|null, percent: number, air: string|null}}
      *
      * mode:
-     *   resume — серия начата, но не досмотрена
-     *   next   — предыдущая досмотрена, включаем следующую
-     *   first  — ничего не смотрели
-     *   done   — досмотрены все вышедшие серии
+     *   resume  — серия начата, но не досмотрена
+     *   next    — предыдущая досмотрена, включаем следующую
+     *   first   — ничего не смотрели
+     *   waiting — всё просмотрено, но сериал продолжается: ждём новую серию
+     *   restart — всё просмотрено, продолжения не будет: можно смотреть сначала
      */
-    function decideSeries(episodes, viewOf) {
+    function decideSeries(episodes, viewOf, meta) {
       var list = (episodes || []).filter(function (ep) {
         return ep && ep.episode_number;
       });
@@ -649,20 +651,56 @@
         };
       }
       var next = list[last_index + 1];
-      if (!next) {
-        return {
-          mode: 'done',
-          season: list[last_index].season_number,
-          episode: list[last_index].episode_number,
-          percent: last_view.percent
-        };
-      }
+      if (!next) return nothingLeft(list[last_index], last_view, meta);
       return {
         mode: 'next',
         season: next.season_number,
         episode: next.episode_number,
-        percent: 0
+        percent: 0,
+        air: null
       };
+    }
+
+    /**
+     * Вышедшие серии кончились. Дальше всё зависит от того, будет ли продолжение.
+     *
+     * Дату эфира из TMDB показываем как ориентир «не раньше», а не как обещание:
+     * раздача с озвучкой появляется позже эфира, иногда на несколько дней.
+     */
+    function nothingLeft(last, view, meta) {
+      var next = meta && meta.next;
+
+      // серия по данным TMDB уже вышла, а в нашем списке её нет — список устарел,
+      // берём её целью: раздача может быть уже доступна
+      if (next && next.air_date && !isFuture(next.air_date)) {
+        return {
+          mode: 'next',
+          season: next.season_number,
+          episode: next.episode_number,
+          percent: 0,
+          air: next.air_date
+        };
+      }
+      if (next && next.air_date) {
+        return {
+          mode: 'waiting',
+          season: next.season_number,
+          episode: next.episode_number,
+          percent: 0,
+          air: next.air_date
+        };
+      }
+      return {
+        mode: 'restart',
+        season: last.season_number,
+        episode: last.episode_number,
+        percent: view.percent,
+        air: null
+      };
+    }
+    function isFuture(air_date) {
+      var air = new Date(air_date).getTime();
+      return !isNaN(air) && air > Date.now();
     }
 
     /**
@@ -674,19 +712,22 @@
         mode: 'first',
         season: null,
         episode: null,
-        percent: 0
+        percent: 0,
+        air: null
       };
       if (percent < WATCHED) return {
         mode: 'resume',
         season: null,
         episode: null,
-        percent: percent
+        percent: percent,
+        air: null
       };
       return {
-        mode: 'done',
+        mode: 'restart',
         season: null,
         episode: null,
-        percent: percent
+        percent: percent,
+        air: null
       };
     }
 
@@ -694,10 +735,19 @@
      * Подпись под кнопкой. Показывает, что произойдёт по нажатию,
      * чтобы решение плагина не было неожиданным.
      */
-    function label(decision, translate) {
+    function label(decision, translate, formatDate) {
       var t = translate || function (key) {
         return key;
       };
+
+      // Ждём продолжения: показываем ориентир «не раньше эфира». Точную дату
+      // появления раздачи никто не знает, обещать её нельзя.
+      if (decision.mode === 'waiting') {
+        if (!decision.air) return t('continue_waiting');
+        var date = formatDate ? formatDate(decision.air) : decision.air;
+        return t('continue_after') + ' ' + date;
+      }
+      if (decision.mode === 'restart') return t('continue_from_start');
       if (decision.season && decision.episode) {
         var where = 'S' + decision.season + ' · ' + t('continue_episode') + ' ' + decision.episode;
         if (decision.mode === 'resume') return where + ' · ' + decision.percent + '%';
@@ -878,7 +928,7 @@
       describe(card, function (decision) {
         var live = root.find('.button--continue');
         if (!live.length) return;
-        var text = resume.label(decision, Lampa.Lang.translate);
+        var text = resume.label(decision, Lampa.Lang.translate, formatDate);
         live.find('.button--continue__hint').remove();
         if (!text) return;
         live.attr('data-subtitle', text);
@@ -896,8 +946,19 @@
       episodes(card, function (list) {
         done(resume.decideSeries(list, function (season, episode) {
           return Lampa.Timeline.watchedEpisode(card, season, episode, true);
+        }, {
+          next: card.next_episode_to_air
         }));
       });
+    }
+
+    /** Дата в том же виде, в каком её показывает сама карточка */
+    function formatDate(air) {
+      try {
+        return Lampa.Utils.parseTime(air)["short"];
+      } catch (e) {
+        return air;
+      }
     }
     function isSeries(card) {
       return !!(card.number_of_seasons || card.original_name || card.first_air_date);
@@ -938,24 +999,40 @@
         Lampa.Loading.stop();
       });
       describe(card, function (decision) {
-        search(card, function (results) {
-          var filter = cardFilter(card);
-          var params = {
-            season: decision.season,
-            episode: decision.episode,
-            no_cam: Lampa.Storage.field('continue_no_cam') !== false,
-            last: lastRelease(card),
-            voice_rating: Lampa.Storage.get('continue_voices', '{}') || null
-          };
-          var out = pick$1.pick(results, pick$1.context(card, filter, params));
+        // Смотреть нечего: либо ждём новую серию, либо сериал кончился.
+        // Искать раздачи в обоих случаях бессмысленно.
+        if (decision.mode === 'waiting' || decision.mode === 'restart') {
           Lampa.Loading.stop();
-          if (!out.list.length) return nothingFound(card, out);
-          if (needAsk(card, out)) return choose(card, out, decision);
-          launch(card, out.list[0], decision);
-        }, function () {
-          Lampa.Loading.stop();
-          notice('continue_error_search');
-        });
+          return finished(card, decision);
+        }
+        play(card, decision);
+      });
+    }
+
+    /**
+     * Найти раздачу под нужную серию и запустить.
+     */
+    function play(card, decision) {
+      Lampa.Loading.start(function () {
+        return Lampa.Loading.stop();
+      });
+      search(card, function (results) {
+        var filter = cardFilter(card);
+        var params = {
+          season: decision.season,
+          episode: decision.episode,
+          no_cam: Lampa.Storage.field('continue_no_cam') !== false,
+          last: lastRelease(card),
+          voice_rating: Lampa.Storage.get('continue_voices', '{}') || null
+        };
+        var out = pick$1.pick(results, pick$1.context(card, filter, params));
+        Lampa.Loading.stop();
+        if (!out.list.length) return nothingFound(card, out);
+        if (needAsk(card, out)) return choose(card, out, decision);
+        launch(card, out.list[0], decision);
+      }, function () {
+        Lampa.Loading.stop();
+        notice('continue_error_search');
       });
     }
 
@@ -1104,6 +1181,74 @@
     }
 
     /**
+     * Всё просмотрено.
+     *
+     * Завершённый сериал и фильм ведут себя как в стримингах — сразу запускают
+     * с начала. Для выходящего сериала это неуместно: человек ждёт новую серию,
+     * а не первую, поэтому предлагаем выбор и говорим, когда примерно ждать.
+     */
+    function finished(card, decision) {
+      if (decision.mode === 'restart') return restart(card);
+      var title = decision.air ? Lampa.Lang.translate('continue_after') + ' ' + formatDate(decision.air) : Lampa.Lang.translate('continue_waiting');
+      var subtitle = decision.season && decision.episode ? 'S' + decision.season + ' · ' + Lampa.Lang.translate('continue_episode') + ' ' + decision.episode : '';
+      Lampa.Select.show({
+        title: Lampa.Lang.translate('continue_button'),
+        items: [{
+          title: title,
+          subtitle: subtitle,
+          wait: true
+        }, {
+          title: Lampa.Lang.translate('continue_rewatch_last'),
+          rewatch: true
+        }, {
+          title: Lampa.Lang.translate('continue_from_start'),
+          restart: true
+        }, {
+          title: Lampa.Lang.translate('continue_open_torrents'),
+          open_torrents: true
+        }],
+        onSelect: function onSelect(item) {
+          Lampa.Controller.toggle('full_start');
+          if (item.open_torrents) return openTorrents(card);
+          if (item.restart) return restart(card);
+          if (item.rewatch) return rewatchLast(card);
+          // «ждём новую серию» — просто закрываем, действий нет
+        },
+        onBack: function onBack() {
+          return Lampa.Controller.toggle('full_start');
+        }
+      });
+    }
+
+    /** Смотреть сначала: первая серия первого сезона, для фильма — он сам */
+    function restart(card, decision) {
+      var target = isSeries(card) ? {
+        mode: 'first',
+        season: 1,
+        episode: 1,
+        percent: 0
+      } : {
+        mode: 'first',
+        season: null,
+        episode: null,
+        percent: 0
+      };
+      play(card, target);
+    }
+
+    /** Пересмотреть последнюю серию, на которой остановились */
+    function rewatchLast(card) {
+      describe(card, function (decision) {
+        play(card, {
+          mode: 'first',
+          season: decision.season,
+          episode: decision.episode,
+          percent: 0
+        });
+      });
+    }
+
+    /**
      * Ничего не подошло. Молчать нельзя — объясняем причину и даём выход
      * на обычный список раздач.
      */
@@ -1242,7 +1387,6 @@
       Lampa.Storage.set('torrents_filter_data', all);
     }
     function launch(card, cand, decision) {
-      if (decision.mode === 'done') notice('continue_all_watched');
       rememberRelease(card, cand);
       var want = decision.season && decision.episode ? {
         season: decision.season,
@@ -1349,10 +1493,25 @@
         en: 'English',
         uk: 'Англійська'
       },
-      continue_all_watched: {
-        ru: 'Все вышедшие серии просмотрены, включаю последнюю',
-        en: 'All aired episodes watched, playing the last one',
-        uk: 'Усі серії переглянуті, вмикаю останню'
+      continue_after: {
+        ru: 'Новая серия после',
+        en: 'New episode after',
+        uk: 'Нова серія після'
+      },
+      continue_waiting: {
+        ru: 'Ждём новую серию',
+        en: 'Waiting for a new episode',
+        uk: 'Чекаємо на нову серію'
+      },
+      continue_from_start: {
+        ru: 'Смотреть сначала',
+        en: 'Watch from the start',
+        uk: 'Дивитися спочатку'
+      },
+      continue_rewatch_last: {
+        ru: 'Пересмотреть последнюю серию',
+        en: 'Rewatch the last episode',
+        uk: 'Переглянути останню серію'
       },
       continue_error_noserver: {
         ru: 'Не настроен TorrServer',
