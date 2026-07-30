@@ -342,6 +342,10 @@
 
         // нужный сезон обязан быть в раздаче
         if (ctx.season && p.seasons.length && p.seasons.indexOf(ctx.season) === -1) return false;
+
+        // Как и нужная серия. Раздача «серии 1-2», когда нужна четвёртая,
+        // бесполезна — предлагать её незачем.
+        if (ctx.episode && p.episodes && !hasEpisode(cand, ctx)) return false;
         if (relax.indexOf('quality') === -1 && ctx.max_resolution && p.resolution) {
           if (p.resolution > ctx.max_resolution) return false;
         }
@@ -378,10 +382,12 @@
       if (hasEpisode(cand, ctx)) s += 400;
       if (cand.viewed) s += 300;
 
-      // раздача, похожая на прошлую: та же студия и то же качество
+      // Раздача, похожая на прошлую. Привычное качество важнее максимального:
+      // если сериал смотрели в 1080p, незачем посреди сезона переходить на 4K.
+      // Поэтому бонус заведомо больше разницы между соседними ступенями качества.
       if (ctx.last) {
         if (ctx.last.voice && p.voices.indexOf(ctx.last.voice) >= 0) s += 250;
-        if (ctx.last.resolution && p.resolution === ctx.last.resolution) s += 60;
+        if (ctx.last.resolution && p.resolution === ctx.last.resolution) s += 250;
       }
       if (ctx.voice && p.voices.indexOf(ctx.voice) >= 0) s += 200;
 
@@ -435,7 +441,9 @@
           list: [],
           relaxed: relax,
           confident: false,
-          reason: onlyCamAround(all, ctx) ? 'only_cam' : 'not_found'
+          continues: false,
+          voices: [],
+          reason: emptyReason(all, ctx)
         };
       }
       list.forEach(function (cand) {
@@ -457,16 +465,29 @@
     }
 
     /**
-     * Отсеклись все, но по названию и году что-то было — значит остались экранки.
-     * Об этом надо сказать честно, а не молча запускать.
+     * Почему не осталось ни одного кандидата. Пользователю нужно понимать разницу
+     * между «ничего нет», «есть только экранки» и «серия ещё не появилась в раздачах».
      */
-    function onlyCamAround(all, ctx) {
+    function emptyReason(all, ctx) {
       var same = all.filter(function (cand) {
         return cand.seeders && isSameTitle(cand, ctx);
       });
-      return same.length > 0 && same.every(function (cand) {
+      if (!same.length) return 'not_found';
+      if (same.every(function (cand) {
         return cand.parsed.is_cam;
-      });
+      })) return 'only_cam';
+
+      // раздачи нужного сезона есть, но ни в одной нет нужной серии
+      if (ctx.episode) {
+        var season = same.filter(function (cand) {
+          var p = cand.parsed;
+          return !ctx.season || !p.seasons.length || p.seasons.indexOf(ctx.season) >= 0;
+        });
+        if (season.length && !season.some(function (cand) {
+          return hasEpisode(cand, ctx);
+        })) return 'no_episode_yet';
+      }
+      return 'not_found';
     }
 
     /**
@@ -923,7 +944,8 @@
             season: decision.season,
             episode: decision.episode,
             no_cam: Lampa.Storage.field('continue_no_cam') !== false,
-            last: lastRelease(card)
+            last: lastRelease(card),
+            voice_rating: Lampa.Storage.get('continue_voices', '{}') || null
           };
           var out = pick$1.pick(results, pick$1.context(card, filter, params));
           Lampa.Loading.stop();
@@ -1004,6 +1026,22 @@
         resolution: rec.q || null
       };
     }
+
+    /**
+     * Пометить раздачу как открытую — тем же способом, что и штатный экран торрентов.
+     *
+     * Метку ставит сам компонент торрентов при запуске файла, но мы запускаем в обход
+     * него, поэтому раздача оставалась непомеченной: следующая серия не опознавалась
+     * как продолжение, и плагин каждый раз спрашивал заново. Заодно раздача получает
+     * привычную галочку в обычном списке.
+     */
+    function markViewed(cand) {
+      var viewed = Lampa.Storage.cache('torrents_view', 5000, []);
+      var hash = cand.raw.hash || Lampa.Utils.hash(cand.title);
+      if (viewed.indexOf(hash) >= 0) return;
+      viewed.push(hash);
+      Lampa.Storage.set('torrents_view', viewed);
+    }
     function rememberRelease(card, cand) {
       var all = Lampa.Storage.cache('continue_last', 150, {});
       var cid = cardID(card);
@@ -1016,6 +1054,44 @@
         t: Date.now()
       };
       Lampa.Storage.set('continue_last', all);
+      countVoice(cand);
+    }
+
+    /**
+     * Рейтинг студий по всем просмотренным тайтлам.
+     *
+     * Нужен для первого запуска незнакомого сериала: предпочтение по нему ещё
+     * не задано, но привычная студия обычно та же, что и в остальных.
+     */
+    function countVoice(cand) {
+      var voice = cand.parsed.voices[0];
+      if (!voice) return;
+      var rating = Lampa.Storage.get('continue_voices', '{}') || {};
+      rating[voice] = (rating[voice] || 0) + 1;
+      var names = Object.keys(rating);
+
+      // Затухание: свежие предпочтения должны весить больше давних, иначе
+      // студия, которую смотрели три года назад, останется лидером навсегда.
+      var total = names.reduce(function (sum, name) {
+        return sum + rating[name];
+      }, 0);
+      if (total > 40) {
+        names.forEach(function (name) {
+          rating[name] = rating[name] / 2;
+          if (rating[name] < 1) delete rating[name];
+        });
+      }
+
+      // держим только заметные студии, чтобы ключ не разрастался
+      names = Object.keys(rating).sort(function (a, b) {
+        return rating[b] - rating[a];
+      });
+      if (names.length > 30) {
+        names.slice(30).forEach(function (name) {
+          return delete rating[name];
+        });
+      }
+      Lampa.Storage.set('continue_voices', rating);
     }
 
     /**
@@ -1032,7 +1108,11 @@
      * на обычный список раздач.
      */
     function nothingFound(card, out) {
-      var text = out.reason === 'only_cam' ? Lampa.Lang.translate('continue_only_cam') : Lampa.Lang.translate('continue_not_found');
+      var keys = {
+        only_cam: 'continue_only_cam',
+        no_episode_yet: 'continue_no_episode_yet'
+      };
+      var text = Lampa.Lang.translate(keys[out.reason] || 'continue_not_found');
       Lampa.Select.show({
         title: Lampa.Lang.translate('continue_button'),
         items: [{
@@ -1061,7 +1141,7 @@
       var items = top.map(function (cand) {
         return {
           title: candidateTitle(cand),
-          subtitle: candidateSubtitle(cand, decision),
+          subtitle: candidateSubtitle(cand),
           cand: cand
         };
       });
@@ -1143,12 +1223,6 @@
       // источник дублируем в подзаголовок, только если он не ушёл в заголовок
       if (cand.parsed.voices.length && SOURCE_NAMES[cand.parsed.source]) parts.push(SOURCE_NAMES[cand.parsed.source]);
       if (cand.viewed) parts.push(Lampa.Lang.translate('continue_seen'));
-
-      // раздача есть, но нужной серии в ней может не быть
-      if (decision && decision.episode && cand.parsed.episodes) {
-        var has = decision.episode >= cand.parsed.episodes[0] && decision.episode <= cand.parsed.episodes[1];
-        if (!has) parts.push(Lampa.Lang.translate('continue_no_episode_hint'));
-      }
       return parts.join(' · ');
     }
 
@@ -1255,10 +1329,10 @@
         en: 'watched before',
         uk: 'вже дивилися'
       },
-      continue_no_episode_hint: {
-        ru: 'серии может не быть',
-        en: 'episode may be missing',
-        uk: 'серії може не бути'
+      continue_no_episode_yet: {
+        ru: 'Этой серии пока нет в раздачах',
+        en: 'This episode is not in any release yet',
+        uk: 'Цієї серії ще немає в роздачах'
       },
       continue_lang_ru: {
         ru: 'Русский',
