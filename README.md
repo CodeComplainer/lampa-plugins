@@ -2,8 +2,9 @@
 
 Плагины для [Lampa](https://github.com/yumata/lampa-source).
 
-Подключение: в Lampa открыть каталог плагинов и добавить raw-ссылку на нужный файл.
+Подключение: в Lampa открыть каталог плагинов и добавить ссылку на менеджер —
+остальные плагины включаются в настройках, раздел «Мои плагины».
 
 ```
-https://raw.githubusercontent.com/CodeComplainer/lampa-plugins/main/<плагин>.js
+https://codecomplainer.github.io/lampa-plugins/manager.js
 ```
