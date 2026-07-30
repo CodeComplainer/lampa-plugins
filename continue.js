@@ -748,8 +748,11 @@
         return t('continue_after') + ' ' + date;
       }
       if (decision.mode === 'restart') return t('continue_from_start');
+
+      // Компактная нотация: подпись висит на кнопке, и «S3 · серия 5 · …»
+      // растягивает её на пол-экрана
       if (decision.season && decision.episode) {
-        var where = 'S' + decision.season + ' · ' + t('continue_episode') + ' ' + decision.episode;
+        var where = 'S' + decision.season + 'E' + decision.episode;
         if (decision.mode === 'resume') return where + ' · ' + decision.percent + '%';
         return where;
       }
@@ -873,7 +876,12 @@
      * Подпись рисуем сами: штатный data-subtitle виден только в выпадающем списке
      * кнопки «Смотреть», а нам нужно показать серию прямо на кнопке.
      */
-    var BUTTON_STYLE = "<style id=\"continue-style\">\n    .full-start-new__buttons .full-start__button span.button--continue__hint{\n        display: inline-block !important;\n        margin-left: .7em;\n        font-size: 1.1em;\n        white-space: nowrap;\n    }\n</style>";
+    /**
+     * Подпись показывается всегда, а штатное название кнопки при этом прячется —
+     * иначе при фокусе Lampa раскрывает текст и строка превращается
+     * в «Смотреть · S3E5 · нет раздачи» шириной в треть экрана.
+     */
+    var BUTTON_STYLE = "<style id=\"continue-style\">\n    .full-start-new__buttons .full-start__button span.button--continue__hint{\n        display: inline-block !important;\n        margin-left: .7em;\n        font-size: 1.1em;\n        white-space: nowrap;\n    }\n    .full-start-new__buttons .full-start__button.button--continue.has--hint span:not(.button--continue__hint){\n        display: none !important;\n    }\n</style>";
     function startPlugin() {
       if (window.plugin_continue_ready) return;
       window.plugin_continue_ready = true;
@@ -926,14 +934,73 @@
      */
     function hint(card, root) {
       describe(card, function (decision) {
+        draw(root, resume.label(decision, Lampa.Lang.translate, formatDate));
+        probeFresh(card, decision, function (available) {
+          if (available) return;
+
+          // Серия вышла по календарю, но раздачи с ней ещё нет. Честнее сказать
+          // это сразу, чем показывать номер серии и обнаруживать пустоту
+          // только после долгого поиска.
+          var where = resume.label(decision, Lampa.Lang.translate, formatDate);
+          draw(root, (where ? where + ' · ' : '') + Lampa.Lang.translate('continue_not_yet_released'));
+        });
+      });
+      function draw(root, text) {
         var live = root.find('.button--continue');
         if (!live.length) return;
-        var text = resume.label(decision, Lampa.Lang.translate, formatDate);
         live.find('.button--continue__hint').remove();
+        live.toggleClass('has--hint', !!text);
         if (!text) return;
         live.attr('data-subtitle', text);
         live.append("<span class=\"button--continue__hint\">".concat(text, "</span>"));
-      });
+      }
+    }
+
+    /** Серия считается свежей, пока раздачи могут ещё не появиться */
+    var FRESH_DAYS = 7;
+
+    /** Насколько доверяем прошлой проверке */
+    var PROBE_TTL = 1000 * 60 * 30;
+
+    /**
+     * Фоновая проверка: есть ли вообще раздача с нужной серией.
+     *
+     * Делается только для свежих серий — у старых раздачи заведомо есть, и гонять
+     * поиск при каждом открытии карточки незачем. Результат кешируется, поэтому
+     * повторные заходы обходятся без запроса.
+     */
+    function probeFresh(card, decision, done) {
+      if (decision.mode !== 'next' && decision.mode !== 'first') return;
+      if (!decision.episode || !isSeries(card)) return;
+      if (!decision.air || !isFresh(decision.air)) return;
+      var key = cardID(card) + ':' + decision.season + ':' + decision.episode;
+      var cache = Lampa.Storage.cache('continue_probe', 100, {});
+      var cached = cache[key];
+      if (cached && Date.now() - cached.t < PROBE_TTL) return done(cached.ok);
+      search(card, function (results) {
+        var out = pick$1.pick(results, pick$1.context(card, cardFilter(card), {
+          season: decision.season,
+          episode: decision.episode,
+          no_cam: Lampa.Storage.field('continue_no_cam') !== false
+        }));
+        var ok = out.list.length > 0;
+        remember(key, ok);
+        done(ok);
+      }, function () {});
+      function remember(key, ok) {
+        var all = Lampa.Storage.cache('continue_probe', 100, {});
+        delete all[key];
+        all[key] = {
+          ok: ok,
+          t: Date.now()
+        };
+        Lampa.Storage.set('continue_probe', all);
+      }
+    }
+    function isFresh(air) {
+      var time = new Date(air).getTime();
+      if (isNaN(time)) return false;
+      return Date.now() - time < FRESH_DAYS * 24 * 60 * 60 * 1000;
     }
 
     /**
@@ -944,11 +1011,20 @@
         return done(resume.decideMovie(Lampa.Timeline.view(Lampa.Utils.hash(card.original_title))));
       }
       episodes(card, function (list) {
-        done(resume.decideSeries(list, function (season, episode) {
+        var decision = resume.decideSeries(list, function (season, episode) {
           return Lampa.Timeline.watchedEpisode(card, season, episode, true);
         }, {
           next: card.next_episode_to_air
-        }));
+        });
+
+        // дата выхода целевой серии нужна, чтобы понять, свежая ли она
+        if (!decision.air && decision.episode) {
+          var target = list.find(function (ep) {
+            return ep.season_number === decision.season && ep.episode_number === decision.episode;
+          });
+          if (target) decision.air = target.air_date || null;
+        }
+        done(decision);
       });
     }
 
@@ -982,7 +1058,8 @@
             if (air && air > now) return;
             out.push({
               season_number: ep.season_number || number,
-              episode_number: ep.episode_number
+              episode_number: ep.episode_number,
+              air_date: ep.air_date || null
             });
           });
         });
@@ -1472,6 +1549,11 @@
         ru: 'уже смотрели',
         en: 'watched before',
         uk: 'вже дивилися'
+      },
+      continue_not_yet_released: {
+        ru: 'нет раздачи',
+        en: 'no release',
+        uk: 'немає роздачі'
       },
       continue_no_episode_yet: {
         ru: 'Этой серии пока нет в раздачах',
