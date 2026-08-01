@@ -29,7 +29,14 @@
        * поэтому одно значение на всех — не упрощение, а точное описание привычки.
        */
       subs_lang: 'cc_watch_subs_lang',
-      /** Рейтинг студий озвучки с затуханием */
+      /**
+       * Счётчик запусков раздач по студиям, с затуханием. Личный ключ continue:
+       * толковать студии и подбирать раздачу — его работа.
+       *
+       * Выбор дорожки в плеере сюда не пишется. Его наблюдает memory и кладёт
+       * в свою запись по карточке, а continue домешивает при чтении — так ни
+       * один плагин не работает на другого.
+       */
       voices: 'cc_continue_voices',
       /** Уже проверенные раздачи, чтобы не опрашивать их повторно */
       probe: 'cc_continue_probe',
@@ -46,307 +53,6 @@
     };
     var keys = {
       KEYS: KEYS
-    };
-
-    /**
-     * Сопоставление аудиодорожек между раздачами.
-     *
-     * Индекс дорожки для этого не годится: в одной раздаче русская дорожка первая,
-     * в другой третья. Поэтому запоминаем язык и название озвучки, а при следующем
-     * запуске ищем максимально близкую.
-     */
-
-    /**
-     * Приметы дорожки, по которым её можно узнать в другой раздаче.
-     *
-     * @param {Object} track - дорожка плеера
-     * @returns {{lang: string, label: string}|null}
-     */
-    function describe$1(track) {
-      if (!track) return null;
-      var lang = language(track.language || track.lang || '');
-      var label = clean$1(track.label || track.name || '');
-      if (!lang && !label) return null;
-      return {
-        lang: lang,
-        label: label
-      };
-    }
-
-    /**
-     * Приметы всего списка: языки в том же порядке.
-     *
-     * Нужны, чтобы понять, та ли это раздача. Названия дорожек приходят не от
-     * плеера, а от стороннего плагина `tracks`, который дописывает `label`
-     * в объекты дорожек. Он может отвалиться — у нас так и вышло, когда умер
-     * домен `cub.red`, — и тогда от дорожки остаётся один язык, а двух русских
-     * озвучек это не различает.
-     *
-     * Зато если список тот же, то и файл тот же, и номер дорожки в нём осмыслен.
-     * Проверка дешёвая и честная: разошёлся порядок или число дорожек — значит
-     * раздача другая, и номеру верить нельзя.
-     *
-     * @param {Array} tracks
-     * @returns {string} например `ru,ru,en`
-     */
-    function shape(tracks) {
-      return (tracks || []).filter(Boolean).map(function (track) {
-        return language(track.language || track.lang || '');
-      }).join(',');
-    }
-
-    /**
-     * Код языка приходит в разном виде: в браузере двухбуквенный (`ru`),
-     * на webOS трёхбуквенный (`rus`). Без приведения запись, сделанная на одном
-     * устройстве, не совпала бы с дорожками на другом.
-     */
-    var LANGS = {
-      rus: 'ru',
-      ukr: 'uk',
-      eng: 'en',
-      kor: 'ko',
-      jpn: 'ja',
-      chi: 'zh',
-      zho: 'zh',
-      ger: 'de',
-      deu: 'de',
-      fre: 'fr',
-      fra: 'fr',
-      spa: 'es',
-      ita: 'it',
-      pol: 'pl',
-      tur: 'tr'
-    };
-    function language(value) {
-      var lang = clean$1(value);
-      return LANGS[lang] || lang;
-    }
-
-    /**
-     * Найти дорожку, наиболее похожую на запомненную.
-     *
-     * Совпадение по названию озвучки важнее языка: «Дубляж» и «LostFilm» — обе
-     * русские, но человек выбирал конкретную.
-     *
-     * @param {Array} tracks - дорожки текущего файла
-     * @param {Object} saved - результат describe() с прошлого раза
-     * @returns {Object|null}
-     */
-    function match(tracks, saved) {
-      var list = (tracks || []).filter(Boolean);
-      if (!list.length || !saved) return null;
-      var described = list.map(function (track) {
-        return {
-          track: track,
-          about: describe$1(track)
-        };
-      });
-      var best = null;
-      var best_score = 0;
-      described.forEach(function (item) {
-        var score = compare(item.about, saved);
-        if (score > best_score) {
-          best_score = score;
-          best = item.track;
-        }
-      });
-
-      // По названию ничего не нашлось — 3 балла и выше даёт только совпадение
-      // имени, всё что ниже держится на одном языке. Если список дорожек тот же,
-      // что и в прошлый раз, значит это та же раздача, и номер точнее языка:
-      // русских озвучек бывает две, и без номера берётся первая попавшаяся.
-      if (best_score < 3 && byIndex(list, saved)) return byIndex(list, saved);
-      return best;
-    }
-
-    /** Дорожка по запомненному номеру — только если список не изменился */
-    function byIndex(list, saved) {
-      if (typeof saved.index !== 'number' || !saved.shape) return null;
-      if (saved.shape !== shape(list)) return null;
-      return list[saved.index] || null;
-    }
-
-    /**
-     * Насколько дорожка похожа на запомненную. Ноль означает «не подходит»:
-     * лучше оставить выбор плеера, чем включить заведомо чужую озвучку.
-     */
-    function compare(about, saved) {
-      if (!about) return 0;
-      var same_lang = !!about.lang && about.lang === saved.lang;
-      var same_label = !!about.label && about.label === saved.label;
-      if (same_label && same_lang) return 4;
-      if (same_label) return 3;
-
-      // название могло записаться иначе, но одна строка входит в другую
-      if (about.label && saved.label && (about.label.includes(saved.label) || saved.label.includes(about.label))) {
-        return same_lang ? 3 : 2;
-      }
-
-      // язык тот же, а озвучку в прошлый раз не удалось опознать
-      if (same_lang && !saved.label) return 2;
-      if (same_lang) return 1;
-      return 0;
-    }
-
-    /** Выбранная сейчас дорожка */
-    function selected(tracks) {
-      var list = (tracks || []).filter(Boolean);
-      return list.find(function (track) {
-        return track.selected;
-      }) || list.find(function (track) {
-        return track.enabled;
-      }) || null;
-    }
-
-    /**
-     * Переключение — та же последовательность, что делает штатная панель плеера:
-     * снять признаки со всех, поставить выбранной и позвать её onSelect.
-     */
-    function apply(tracks, track) {
-      if (!track) return false;
-      var list = (tracks || []).filter(Boolean);
-      list.forEach(function (item) {
-        item.enabled = false;
-        item.selected = false;
-      });
-      track.enabled = true;
-      track.selected = true;
-      if (typeof track.onSelect === 'function') track.onSelect(track);
-      return true;
-    }
-
-    /* -------------------------------------------------------------- субтитры */
-
-    /**
-     * Дорожки субтитров живут по своим правилам: включённость обозначается полем
-     * `mode`, а в списке может лежать псевдострока «Отключено» с индексом -1,
-     * которую панель добавляет при первом открытии.
-     */
-    function realSubs(subs) {
-      return (subs || []).filter(function (item) {
-        return item && item.index !== -1;
-      });
-    }
-
-    /**
-     * Что выбрано сейчас. `null` — субтитры выключены, и это полноценный ответ:
-     * человек мог отключить их намеренно.
-     */
-    function selectedSub(subs) {
-      return realSubs(subs).find(function (item) {
-        return item.selected || item.mode === 'showing';
-      }) || null;
-    }
-
-    /**
-     * Переключение повторяет последовательность штатной панели плеера
-     * ([panel.js:427](src/interaction/player/panel.js:427)): снять режим со всех,
-     * поставить выбранной и позвать её onSelect.
-     *
-     * Видимость переключает вызывающий: за неё отвечает Video.subsview.
-     *
-     * Выключение — отдельный случай. На webOS `mode` это не поле, а сеттер, и
-     * реагирует он только на `showing` ([webos.js:76](src/interaction/player/webos.js:76)),
-     * поэтому «выключить всё» там не выключает ничего. Выключением служит
-     * псевдострока «Отключено» с индексом -1: её и выбираем.
-     */
-    function applySub(subs, track) {
-      var list = subs || [];
-      var target = track || list.find(function (item) {
-        return item && item.index === -1;
-      }) || null;
-      list.forEach(function (item) {
-        item.selected = false;
-        if (item !== target) item.mode = 'disabled';
-      });
-      if (!target) return false;
-      target.mode = 'showing';
-      target.selected = true;
-      if (typeof target.onSelect === 'function') target.onSelect(target);
-      return !!track;
-    }
-    function matchSub(subs, saved) {
-      return match(realSubs(subs), saved);
-    }
-    function clean$1(value) {
-      return ((value || '') + '').toLowerCase().trim();
-    }
-    var match$1 = {
-      describe: describe$1,
-      shape: shape,
-      match: match,
-      compare: compare,
-      selected: selected,
-      apply: apply,
-      selectedSub: selectedSub,
-      applySub: applySub,
-      matchSub: matchSub,
-      realSubs: realSubs
-    };
-
-    /**
-     * Заметить, что выбор дорожки или субтитров сменился.
-     *
-     * Ждать закрытия плеера нельзя: события `destroy` не будет, если телевизор
-     * выключили кнопкой, приложение сняли или устройство ушло в сон, — и выбор,
-     * сделанный за весь вечер, пропадал.
-     *
-     * **Объекты плеера при этом не трогаем.** Была попытка подменять у них
-     * `onSelect` — панель зовёт его после выбора, и поле выглядит как оставленная
-     * для плагинов зацепка. На телевизоре это дважды подвесило список дорожек:
-     * он схлопывался, а фокус оставался на нём, и из плеера было не выйти.
-     * Причину поймать не удалось, но менять чужие структуры ради удобства —
-     * плохой размен: цена ошибки тут не «фича не сработала», а «телевизор завис».
-     *
-     * Поэтому наблюдаем со стороны: раз в несколько секунд смотрим, что выбрано,
-     * и реагируем только на смену. Заодно ловится и выбор, сделанный самим плеером,
-     * — через `onSelect` он не проходил вовсе.
-     */
-
-    function create$1() {
-      /** Приметы того, что было выбрано в прошлый раз */
-      var last = '';
-
-      /** Первое наблюдение уже было */
-      var primed = false;
-      return {
-        /**
-         * @param {Object|null} about - результат describe() по выбранному
-         * @returns {Object|null} то же самое, если выбор сменился, иначе null
-         */
-        check: function check(about) {
-          var sign = about ? (about.lang || '') + '|' + (about.label || '') : '';
-
-          // Первое наблюдение — точка отсчёта, а не решение. Дорожку в начале
-          // файла ставит плеер, и засчитывать её как выбор человека нельзя:
-          // рейтинг студий раздувался бы просто от того, что кино включили.
-          if (!primed) {
-            primed = true;
-            last = sign;
-            return null;
-          }
-
-          // Пустой выбор — тоже не решение: на webOS плеер не помечает
-          // дорожку, которую поставил сам, и отличить «ничего не выбрано»
-          // от «выбрали и не сказали» невозможно.
-          if (!sign || sign === last) return null;
-          last = sign;
-          return about;
-        },
-        /** Новый файл: прошлый выбор к нему отношения не имеет */reset: function reset() {
-          last = '';
-          primed = false;
-        },
-        state: function state() {
-          return {
-            last: last,
-            primed: primed
-          };
-        }
-      };
-    }
-    var watch = {
-      create: create$1
     };
 
     /**
@@ -615,6 +321,121 @@
     var Voices = ["Анастасия Гайдаржи + Андрей Юрченко", "Студии Суверенного Лепрозория", "Студия Пиратского Дубляжа", "IgVin &amp; Solncekleshka", "Gremlin Creative Studio", "Alternative Production", "HelloMickey Production", "Bubble Dubbing Company", "Н.Севастьянов seva1988", "XDUB Dorama + Колобок", "Мобильное телевидение", "СПД - Сладкая парочка", "Selena International", "Black Street Records", "Intra Communications", "BBC Saint-Petersburg", "Melodic Voice Studio", "Voice Project Studio", "Несмертельное оружие", "Петербургский дубляж", "Studio Victory Аsia", "Asian Miracle Group", "True Dubbing Studio", "Lizard Cinema Trade", "National Geographic", "Позитив-Мультимедиа", "Премьер Мультимедиа", "Уолт Дисней Компани", "Parovoz Production", "Shadow Dub Project", "Zone Vision Studio", "Анастасия Гайдаржи", "The Kitchen Russia", "Малиновский Сергей", "Family Fan Edition", "Paramount Pictures", "Иванова и П. Пашут", "Так Треба Продакшн", "Хихикающий доктор", "Четыре в квадрате", "Project Web Mania", "Paramount Channel", "Back Board Cinema", "Zoomvision Studio", "Universal Channel", "RedDiamond Studio", "НеЗупиняйПродакшн", "Селена Интернешнл", "Студия «Стартрек»", "Колодій Трейлерів", "Universal Russia", "Paramount Comedy", "Андрей Питерский", "Реальный перевод", "MC Entertainment", "Екатеринбург Арт", "Lucky Production", "Cowabunga Studio", "Анатолий Ашмарин", "Васька Куролесов", "Brain Production", "Квадрат Малевича", "Первый канал ОРТ", "Русский Репортаж", "Сolumbia Service", "Sunshine Studio", "GreenРай Studio", "New Dream Media", "DeadLine Studio", "Воробьев Сергей", "DeeAFilm Studio", "Николай Дроздов", "Денис Шадинский", "Cartoon Network", "Amazing Dubbing", "Volume-6 Studio", "Антонов Николай", "Ульпаней Эльром", "Cinema Prestige", "AnimeSpace Team", "CinemaSET GROUP", "XvidClub Studio", "З Ранку До Ночі", "Максим Логинофф", "Студия Горького", "Ушастая озвучка", "Hamster Studio", "Agatha Studdio", "SunshineStudio", "Kulzvuk Studio", "Вартан Дохалов", "Viasat History", "DIVA Universal", "KosharaSerials", "Julia Prosenuk", "SovetRomantica", "Mallorn Studio", "TUMBLER Studio", "CrazyCatStudio", "Syfy Universal", "Horizon Studio", "Анатолий Гусев", "Максим Жолобов", "RedRussian1337", "Creative Sound", "Garsu Pasaulis", "visanti-vasaer", "GoodTime Media", "Кирдин | Stalk", "Anything-group", "Goodtime Media", "Jakob Bellmann", "Витя «говорун»", "Л. Володарский", "Леша Прапорщик", "Медиа-Комплекс", "Прайд Продакшн", "Русский дубляж", "Союзмультфильм", "Студия Колобок", "Red Head Sound", "LE-Production", "ViruseProject", "Victory-Films", "Jetvis Studio", "Greb&Creative", "5-й канал СПб", "Dream Records", "Filiza Studio", "SHIZA Project", "Bars MacAdams", "Nazel & Freya", "Vulpes Vulpes", "Храм Дорам ТВ", "АРК-ТВ Studio", "Film Prestige", "Rainbow World", "Banyan Studio", "Bonsai Studio", "Мадлен Дюваль", "VO-Production", "Voice Project", "Flarrow Films", "Видеопродакшн", "Хоррор Мэйкер", "Lizard Cinema", "Фортуна-Фильм", "VIP Serial HD", "Старый Бильбо", "Семыкина Юлия", "Штамп Дмитрий", "Arasi project", "ARRU Workshop", "Byako Records", "FiliZa Studio", "Gezell Studio", "HamsterStudio", "PCB Translate", "Renegade Team", "Sci-Fi Russia", "The Mike Rec.", "VO-production", "Мика Бондарик", "Наталья Гурзо", "Премьер Видео", "Трамвай-фильм", "Кубик в Кубе", "Кураж-Бамбей", "Первый канал", "Trdlo.studio", "Студия Райдо", "AniLibria.TV", "RG.Paravozik", "Profix Media", "AlphaProject", "AnimeReactor", "Кармен Видео", "Korean Craze", "Sony Channel", "Train Studio", "Фильмэкспорт", "Кирилл Сагач", "ViP Premiere", "Деваль Видео", "RussianGuy27", "HaseRiLLoPaW", "Сергей Дидок", "Mystery Film", "Psychotronic", "КонтентикOFF", "Говинда Рага", "Horror Maker", "Альтера Парс", "Видеоимпульс", "Мьюзик-трейд", "Тоникс Медиа", "Элегия фильм", "Oneinchnales", "Кинопремьера", "A. Lazarchuk", "Animereactor", "BadCatStudio", "DreamRecords", "General Film", "Ivnet Cinema", "RG Paravozik", "sweet couple", "VictoryFilms", "VulpesVulpes", "Wayland team", "Гей Кино Гид", "Нурмухаметов", "Е. Хрусталёв", "К. Поздняков", "Н. Золотухин", "Новый Дубляж", "Р. Янкелевич", "С. Кузьмичёв", "С. Щегольков", "Синема Трейд", "Синта Рурони", "Точка Zрения", "КОМНАТА ДИДИ", "FocusStudio", "Gears Media", "GladiolusTV", "RecentFilms", "NEON Studio", "Володарский", "Мастер Тэйп", "XDUB Dorama", "Sound-Group", "Sony Sci-Fi", "Good People", "JWA Project", "Nika Lenina", "RiZZ_fisher", "New Records", "КураСгречей", "Неоклассика", "CrezaStudio", "Видеосервис", "BTI Studios", "Eurochannel", "Варус-Видео", "HiWay Grope", "Эй Би Видео", "Nickelodeon", "StudioFilms", "Paul Bunyan", "Inter Video", "Franek Monk", "Другое кино", "Севастьянов", "Lazer Video", "Max Nabokov", "Завгородний", "SnowRecords", "Crunchyroll", "Gold Cinema", "Прямостанов", "Огородников", "Кенс Матвей", "1001 cinema", "Cactus Team", "Description", "DVD Classic", "Gala Voices", "hungry_inri", "Neoclassica", "Oghra-Brown", "Rebel Voice", "Saint Sound", "SakuraNight", "TF-AniGroup", "TrainStudio", "Zone Studio", "Zone Vision", "Варус Видео", "Г. Либергал", "Г. Румянцев", "Е. Гаевский", "И. Сафронов", "И. Степанов", "Лазер Видео", "Малиновский", "Новый Канал", "Петербуржец", "С. Визгунов", "С. Кузнецов", "Студия Трёх", "Цікава Ідея", "Я. Беллманн", "Studio Band", "ApofysTeam", "Карповский", "LevshaFilm", "1001cinema", "CP Digital", "Интерфильм", "Комедия ТВ", "Ох! Студия", "SilverSnow", "NewStation", "StudioBand", "Rain Death", "Первый ТВЧ", "HiWayGrope", "Animegroup", "Shachiburi", "CactusTeam", "Sony Turbo", "AXN Sci-Fi", "Т.О Друзей", "West Video", "East Dream", "Sound Film", "MaxMeister", "VoicePower", "CoralMedia", "VSI Moscow", "VGM Studio", "Студия NLS", "Хуан Рохас", "TatamiFilm", "диктор CDV", "Pazl Voice", "Саня Белый", "Мост-Видео", "AimaksaLTV", "Contentica", "Инфо-фильм", "Электричка", "Бусов Глеб", "AvePremier", "BraveSound", "CinemaTone", "DniproFilm", "ELEKTRI4KA", "eraserhead", "Fox Russia", "Mega-Anime", "MifSnaiper", "Nice-Media", "PiratVoice", "Postmodern", "Reanimedia", "Sky Voices", "SkyeFilmTV", "Костюкевич", "Толстобров", "Б. Федоров", "Ващенко С.", "Глуховский", "Держиморда", "Е. Гранкин", "И. Еремеев", "К. Филонов", "Мост Видео", "Н. Антонов", "Н. Дроздов", "Новый диск", "Переводман", "С. Казаков", "С. Лебедев", "С. Макашов", "Союз Видео", "ТВ XXI век", "Ю. Немахов", "Dream Cast", "Причудики", "NewStudio", "Red Media", "Синема УС", "SDI Media", "CasStudio", "turok1990", "HighHopes", "AniLibria", "FanStudio", "Sedorelli", "Flux-Team", "Kobayashi", "KinoGolos", "Fox Crime", "Discovery", "GREEN TEA", "Persona99", "3df voice", "ShinkaDan", "АрхиТеатр", "СВ-Студия", "FilmsClub", "fiendover", "Воротилин", "LakeFilms", "Кириллица", "AniPLague", "JoyStudio", "Формат AB", "AveBrasil", "Невафильм", "OnisFilms", "Neo-Sound", "Муравский", "BeniAffet", "Янкелевич", "AveDorama", "Киномания", "CBS Drama", "Novamedia", "NewComers", "Ghostface", "Sephiroth", "Andre1288", "DoubleRec", "Astana TV", "Останкино", "Видеобаза", "CLS Media", "Seoul Bay", "Хрусталев", "Золотухин", "Videogram", "AAA-Sound", "Epic Team", "GoodVideo", "Gramalant", "INTERFILM", "Kinomania", "No-Future", "RainDeath", "RATTLEBOX", "Sawyer888", "SmallFilm", "SOLDLUCK2", "SpaceDust", "Timecraft", "Total DVD", "Video-BIZ", "VIZ Media", "Васильцев", "Григорьев", "ААА-sound", "Амальгама", "Весельчак", "Деньщиков", "Шадинский", "ЕА Синема", "Зереницын", "И. Клушин", "Имидж-Арт", "Карапетян", "Машинский", "Мительман", "Рыжий пес", "С. Дьяков", "Самарский", "СВ Студия", "Советский", "Солодухин", "ТО Друзей", "Ю. Сербин", "Ю. Товбин", "AnimeVost", "Omskbird", "LostFilm", "AlexFilm", "IdeaFilm", "ColdFilm", "KinoView", "Jimmy J.", "Дольский", "Гаврилов", "Алексеев", "Визгунов", "Либергал", "Кузнецов", "Горчаков", "Gravi-TV", "Murzilka", "STEPonee", "NovaFilm", "Kerems13", "Fox Life", "AzOnFilm", "SorzTeam", "Гаевский", "СВ-Дубль", "GoldTeam", "DexterTV", "AniMedia", "ANIvoice", "JeFerSon", "RealFake", "AniMaunt", "TurkStar", "Медведев", "FilmGate", "Логинофф", "Loginoff", "Animedub", "GostFilm", "ClubFATE", "Hallmark", "Тимофеев", "Дьяконов", "Лексикон", "Superbit", "VideoBIZ", "WestFilm", "kubik&ko", "Марченко", "Журавлев", "Карусель", "Barin101", "Amalgama", "Кинолюкс", "AB-Video", "Пирамида", "Нарышкин", "Дубровин", "Махонько", "Хлопушка", "АрхиАзия", "Ultradox", "Мельница", "Бессонов", "Бахурани", "Индия ТВ", "AdiSound", "ALEKS KV", "AuraFilm", "DeadLine", "Extrabit", "Foxlight", "GetSmart", "ImageArt", "Marclail", "metalrus", "Milirina", "MiraiDub", "MOYGOLOS", "OMSKBIRD", "Radamant", "RoxMarty", "st.Elrom", "VashMax2", "VendettA", "XL Media", "Артемьев", "Васильев", "Савченко", "Воронцов", "Войсовер", "Домашний", "Е. Лурье", "Е. Рудой", "Ист-Вест", "ЛанселаП", "Ленфильм", "Заугаров", "Мосфильм", "Оверлорд", "С. Рябов", "Супербит", "Толмачев", "Ю. Живов", "Paradox", "BaibaKo", "Jaskier", "Колобок", "Михалев", "Дохалов", "SoftBox", "MUZOBOZ", "ZM-Show", "Levelin", "Немахов", "Яроцкий", "BadBajo", "СВ-Кадр", "Позитив", "RusFilm", "Назаров", "Сыендук", "Яковлев", "Lord32x", "Onibaku", "Trina_D", "Hamster", "AniFilm", "HDrezka", "ShowJet", "BukeDub", "SomeWax", "Anifilm", "TVShows", "РуФилмс", "Пифагор", "AniStar", "Netflix", "Octopus", "MixFilm", "Рутилов", "Elysium", "FireDub", "AveTurk", "Багичев", "Дасевич", "Twister", "Морозов", "Sam2007", "SesDizi", "AnyFilm", "Urasiko", "Wakanim", "Латышев", "Ващенко", "Сонотек", "Никитин", "Сонькин", "Кипарис", "Королёв", "RUSCICO", "Филонов", "Ошурков", "Герусов", "Пятница", "5 канал", "Amalgam", "Anistar", "AniWayt", "datynet", "DeadSno", "Eladiel", "ELYSIUM", "F-TRAIN", "FoxLife", "Janetta", "Kолобок", "LeDoyen", "Liga HQ", "lord666", "Macross", "McElroy", "NemFilm", "OpenDub", "PashaUp", "SOFTBOX", "To4kaTV", "TV 1000", "VicTeam", "ZM-SHOW", "Клюквин", "Матвеев", "Смирнов", "Бибиков", "Абдулов", "Данилов", "sf@irat", "Королев", "Люсьена", "Омикрон", "Парадиз", "Пепелац", "Синхрон", "Сокуров", "Хихидок", "AniBaza", "Ozz.tv", "Сербин", "Кравец", "SNK-TV", "Amedia", "Гоблин", "Kiitos", "Есарев", "Санаев", "Шварко", "Карцев", "Кашкин", "Мудров", "Иванов", "Котова", "Kansai", "ZEE TV", "AniDUB", "Ancord", "Berial", "Cuba77", "OSLIKt", "Tycoon", "Курдов", "Кошкин", "Stevie", "Лагута", "Кондор", "Киреев", "FocusX", "Пронин", "neko64", "Shaman", "GalVid", "D.I.M.", "Н-Кино", "Товбин", "binjak", "Акцент", "Козлов", "Нева-1", "Milvus", "Готлиб", "Zerzia", "Дьяков", "Вольга", "Строев", "Alezan", "ДиоНиК", "Стасюк", "TV1000", "NewDub", "Набиев", "Светла", "Nastia", "Emslie", "100 ТВ", "4u2ges", "Azazel", "BD CEE", "Boльгa", "den904", "Elegia", "Gemini", "Jetvis", "JimmyJ", "KANSAI", "kiitos", "L0cDoG", "LeXiKC", "Lisitz", "madrid", "Mikail", "MrRose", "Ozz TV", "Prolix", "RedDog", "Rumble", "Satkur", "Selena", "Suzaku", "WiaDUB", "WVoice", "Zendos", "Агапов", "Акопян", "Шуваев", "АБыГДе", "Акалит", "Альянс", "Анубис", "Anubis", "Арк-ТВ", "Бойков", "Вихров", "Векшин", "Гризли", "Гундос", "Пучков", "Живаго", "Жучков", "Зебуро", "Килька", "Лапшин", "Лизард", "Миняев", "НЕВА 1", "НЛО-TV", "Ракурс", "Россия", "С.Р.И.", "KOleso", "Гуртом", "ТВ СПб", "Швецов", "OnWave", "DZUSKI", "Kerob", "To4ka", "Чадов", "Живов", "ВГТРК", "Elrom", "Игмар", "Котов", "РенТВ", "Рыбин", "Ozeon", "Cmert", "Штейн", "zamez", "Гланц", "Белов", "Anika", "Lupin", "Ryc99", "ko136", "Рябов", "Amber", "Arisu", "DeMon", "Велес", "Акира", "Ворон", "Рудой", "С.Р.И", "Лайко", "D2Lab", "Jetix", "Попов", "Хабар", "Интер", "AniUA", "D2lab", "erogg", "IНТЕР", "JetiX", "PaDet", "RinGo", "seqw0", "SHIZA", "Solod", "ssvss", "Мишин", "АнВад", "Бигыч", "Рукин", "Штамп", "Новий", "Перец", "Райдо", "ТВЧ 1", "Laci", "ETV+", "Vano", "Jade", "RAIM", "Andy", "Нота", "Твин", "ИДДК", "Voiz", "CPIG", "Dice", "Gits", "ICTV", "jept", "KIHO", "Line", "SGEV", "Tori", "Troy", "Twix", "Чуев", "Инис", "Ирэн", "ТВ-3", "ТВИН", "ДТВ", "FOX", "НТВ", "СТС", "ICG", "ТВЦ", "2x2", "MTV", "Oni", "JAM", "AMS", "DDV", "AMC", "НСТ", "IVI", "КТК", "Че!", "MGM", "МИР", "ТНТ", "FDV", "ТВ3", "LDV", "1+1", "2+2", "2х2", "AOS", "CDV", "MCA", "QTV", "TB5", "VHS", "АМС", "ГКГ", "ИГМ", "НТН", "РТР", "ТВ6", "ТРК", "UKR", "D1", "R5", "К9"];
 
     /**
+     * Студии озвучки: опознание по словарю и рейтинг привычек.
+     *
+     * Знание принадлежит continue: только он решает, какую раздачу включить, и
+     * только ему нужно понимать, что «HDRezka Studio» в названии дорожки и
+     * «HDRezka» в заголовке раздачи — одна студия.
+     *
+     * Словарь один и тот же для заголовков и для названий дорожек: студии
+     * подписывают дорожки теми же именами, какими метят раздачи.
+     */
+
+    /**
+     * В словаре Lampa есть языковые и типовые пометки — их нельзя считать студиями.
+     * Поймано на живой выдаче: 'Ukr/Eng' превращалось в озвучку «UKR».
+     */
+    var NOT_A_STUDIO = ['ukr', 'eng', 'rus', 'sub', 'dub', 'mvo', 'dvo', 'avo', 'lmo', 'orig'];
+
+    /** Сколько студий держим в рейтинге и когда включается затухание */
+    var KEEP = 30;
+    var DECAY_AFTER = 40;
+
+    /**
+     * Студии по словарю. Сортировка по длине нужна, чтобы длинное название
+     * находилось раньше короткого, входящего в него как подстрока.
+     */
+    var sorted = null;
+
+    /**
+     * @param {string} text - заголовок раздачи или название дорожки
+     * @returns {string[]} найденные студии, самая длинная первой
+     */
+    function detect(text) {
+      if (!text) return [];
+      if (!sorted) {
+        sorted = Voices.filter(function (v) {
+          return NOT_A_STUDIO.indexOf(v.toLowerCase()) === -1;
+        }).sort(function (a, b) {
+          return b.length - a.length;
+        });
+      }
+      var lower = (text + '').toLowerCase();
+      var found = [];
+      sorted.forEach(function (voice) {
+        var name = voice.toLowerCase();
+
+        // короткие названия ищем только как отдельное слово, иначе ловим мусор
+        if (name.length <= 4) {
+          if (!new RegExp('(^|[^a-zа-яё0-9])' + escapeRegExp(name) + '([^a-zа-яё0-9]|$)', 'i').test(lower)) return;
+        } else if (lower.indexOf(name) === -1) return;
+
+        // пропускаем студию, если она уже вошла в найденное более длинное название
+        if (found.some(function (f) {
+          return f.toLowerCase().indexOf(name) >= 0;
+        })) return;
+        found.push(voice);
+      });
+      return found;
+    }
+
+    /** Первая студия в строке либо null */
+    function one(text) {
+      var found = detect(text);
+      return found.length ? found[0] : null;
+    }
+
+    /**
+     * Подкрутить рейтинг студии.
+     *
+     * Свидетельства разной силы: запуск раздачи — слабое (её выбрали за сидеров и
+     * качество, а студия оказалась какой была), выбор дорожки в плеере — прямое
+     * решение. Вес задаёт вызывающий.
+     *
+     * @param {Object} storage - Lampa.Storage или его подмена в тестах
+     * @param {string} name - студия
+     * @param {number} weight
+     */
+    function bump(storage, name, weight) {
+      if (!name) return;
+      var rating = storage.get(keys.KEYS.voices, '{}') || {};
+      rating[name] = (rating[name] || 0) + weight;
+      var names = Object.keys(rating);
+
+      // Затухание: свежие предпочтения должны весить больше давних, иначе
+      // студия, которую смотрели три года назад, останется лидером навсегда.
+      var total = names.reduce(function (sum, key) {
+        return sum + rating[key];
+      }, 0);
+      if (total > DECAY_AFTER) {
+        names.forEach(function (key) {
+          rating[key] = rating[key] / 2;
+          if (rating[key] < 1) delete rating[key];
+        });
+      }
+
+      // держим только заметные студии, чтобы ключ не разрастался
+      names = Object.keys(rating).sort(function (a, b) {
+        return rating[b] - rating[a];
+      });
+      if (names.length > KEEP) {
+        names.slice(KEEP).forEach(function (key) {
+          delete rating[key];
+        });
+      }
+      storage.set(keys.KEYS.voices, rating);
+    }
+    function escapeRegExp(str) {
+      return (str + '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+    var studio$1 = {
+      detect: detect,
+      one: one,
+      bump: bump,
+      NOT_A_STUDIO: NOT_A_STUDIO
+    };
+
+    /**
      * Разбор названия торрент-раздачи.
      *
      * Свой, а не штатный Lampa.TitleParser: у того три дыры, которые нам критичны —
@@ -793,45 +614,11 @@
     }
 
     /**
-     * В словаре Lampa есть языковые и типовые пометки — их нельзя считать студиями.
-     * Поймано на живой выдаче: 'Ukr/Eng' превращалось в озвучку «UKR».
+     * Студии озвучки — общий разбор: тем же словарём memory опознаёт названия
+     * аудиодорожек, которые человек выбирает в плеере.
      */
-    var NOT_A_STUDIO = ['ukr', 'eng', 'rus', 'sub', 'dub', 'mvo', 'dvo', 'avo', 'lmo', 'orig'];
-
-    /**
-     * Студии озвучки по словарю. Сортировка по длине нужна, чтобы длинное название
-     * находилось раньше короткого, входящего в него как подстрока.
-     */
-    var voices_sorted = null;
     function detectVoices(title) {
-      if (!title) return [];
-      if (!voices_sorted) {
-        voices_sorted = Voices.filter(function (v) {
-          return NOT_A_STUDIO.indexOf(v.toLowerCase()) === -1;
-        }).sort(function (a, b) {
-          return b.length - a.length;
-        });
-      }
-      var lower = (title + '').toLowerCase();
-      var found = [];
-      voices_sorted.forEach(function (voice) {
-        var name = voice.toLowerCase();
-
-        // короткие названия ищем только как отдельное слово, иначе ловим мусор
-        if (name.length <= 4) {
-          if (!new RegExp('(^|[^a-zа-яё0-9])' + escapeRegExp(name) + '([^a-zа-яё0-9]|$)', 'i').test(lower)) return;
-        } else if (lower.indexOf(name) === -1) return;
-
-        // пропускаем студию, если она уже вошла в найденное более длинное название
-        if (found.some(function (f) {
-          return f.toLowerCase().indexOf(name) >= 0;
-        })) return;
-        found.push(voice);
-      });
-      return found;
-    }
-    function escapeRegExp(str) {
-      return (str + '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return studio$1.detect(title);
     }
 
     /**
@@ -1565,9 +1352,7 @@
      * @returns {string|null}
      */
     function studio(label) {
-      if (!label) return null;
-      var found = detectVoices(label + '');
-      return found.length ? found[0] : null;
+      return studio$1.one(label);
     }
     var voice = {
       prefer: prefer,
@@ -1605,18 +1390,15 @@
     var BUTTON_STYLE = "<style id=\"continue-style\">\n    .full-start-new__buttons .full-start__button span.button--continue__hint{\n        display: none;\n        margin-left: .7em;\n        font-size: 1.1em;\n        white-space: nowrap;\n    }\n    .full-start-new__buttons .full-start__button.button--continue.focus span.button--continue__hint,\n    .full-start-new__buttons .full-start__button.button--continue.hover span.button--continue__hint{\n        display: inline-block !important;\n    }\n    .full-start-new__buttons .full-start__button.button--continue.has--hint.focus span:not(.button--continue__hint),\n    .full-start-new__buttons .full-start__button.button--continue.has--hint.hover span:not(.button--continue__hint){\n        display: none !important;\n    }\n    .full-start-new__buttons .full-start__button.button--continue.is--unavailable svg{\n        opacity: .35;\n    }\n    .full-start-new__buttons .full-start__button.button--continue.is--unavailable.focus svg{\n        opacity: .55;\n    }\n</style>";
 
     /**
-     * Вес свидетельства в рейтинге студий.
-     *
-     * Запуск раздачи — слабое свидетельство: её выбрали за сидеров и качество,
-     * а студия оказалась какой была. Выбор дорожки в плеере — прямое решение,
-     * и весит больше. Иначе привычка учится по случайностям.
+     * Веса свидетельств о привычной студии. Запуск раздачи — самое лёгкое: её
+     * выбрали за сидеров и качество, а студия оказалась какой была. Дорожку в
+     * плеере переключают осознанно, поэтому она весит втрое.
      */
     var LAUNCH_WEIGHT = 1;
     var PICK_WEIGHT = 3;
     function startPlugin() {
       if (window.plugin_continue_ready) return;
       window.plugin_continue_ready = true;
-      followTracks();
       memory = store.create(Lampa.Storage);
       if (!document.getElementById('continue-style')) $('body').append(BUTTON_STYLE);
       Lampa.Listener.follow('full', function (e) {
@@ -1849,7 +1631,7 @@
           episode: decision.episode,
           no_cam: Lampa.Storage.field(keys.KEYS.no_cam) !== false,
           last: lastRelease(card),
-          voice_rating: Lampa.Storage.get(keys.KEYS.voices, '{}') || null,
+          voice_rating: voiceRating(),
           aliases: aliases(card, query)
         };
         var out = pick$1.pick(results, pick$1.context(card, filter, params));
@@ -2002,81 +1784,35 @@
      * не задано, но привычная студия обычно та же, что и в остальных.
      */
     function countVoice(cand) {
-      bumpVoice(cand.parsed.voices[0], LAUNCH_WEIGHT);
+      studio$1.bump(Lampa.Storage, cand.parsed.voices[0], LAUNCH_WEIGHT);
     }
 
     /**
-     * Рейтинг учится и на выборе дорожки в плеере, а не только на запусках.
+     * Привычные студии: запуски раздач плюс дорожки, которые человек выбирал сам.
      *
-     * Плагин работает и без memory, поэтому смотрит сам: memory запоминает дорожку
-     * по тайтлу, а нам нужна привычка по всем тайтлам сразу.
+     * Второе весомее: раздачу выбирают за сидеров и качество, а студия там
+     * оказывается какой была, — тогда как дорожку в плеере переключают осознанно.
      *
-     * Наблюдаем со стороны, на том же `timeupdate`, на котором Lampa обновляет
-     * позицию просмотра. Объекты плеера не трогаем — подмена `onSelect` дважды
-     * подвесила список дорожек на телевизоре, см. `shared/watch.js`.
+     * Считается при чтении, а не копится отдельным ключом. Выбор дорожки наблюдает
+     * memory и кладёт в свою запись по карточке; толковать название и решать, что
+     * из этого следует, — работа continue. Так ни один плагин не пишет ради
+     * другого: нет memory — останутся одни запуски, и подбор просто станет грубее.
+     *
+     * Про вес без иллюзий: отбор смотрит только на присутствие студии в этой карте
+     * ([pick.js](pick.js): `if (ctx.voice_rating[v]) s += 80`), а не на величину.
+     * Вес важен для сохраняемого счётчика запусков — он решает, кто переживёт
+     * затухание и обрезку до тридцати, — а здесь, в разовой карте, ни на что не
+     * влияет и стоит только ради единообразия.
      */
-    var WATCH_EVERY = 3000;
-    var tracks_now = null;
-    var seen = watch.create();
-    var looked = 0;
-    function followTracks() {
-      var remember = function remember(e) {
-        tracks_now = e.tracks;
-        seen.reset();
-      };
-      Lampa.PlayerVideo.listener.follow('tracks', remember);
-
-      // на телевизоре списки приезжают своим событием
-      Lampa.PlayerVideo.listener.follow('webos_tracks', remember);
-      Lampa.PlayerVideo.listener.follow('timeupdate', function () {
-        try {
-          lookAtTracks();
-        } catch (err) {
-          console.error('Continue', 'voice watch error:', err);
-        }
+    function voiceRating() {
+      var rating = Object.assign({}, Lampa.Storage.get(keys.KEYS.voices, '{}') || {});
+      var watched = Lampa.Storage.cache(store.KEY, store.LIMIT, {});
+      Object.keys(watched).forEach(function (key) {
+        var track = watched[key] && watched[key].a;
+        var name = track && studio$1.one(track.n);
+        if (name) rating[name] = (rating[name] || 0) + PICK_WEIGHT;
       });
-    }
-    function lookAtTracks() {
-      if (!tracks_now || tracks_now.length < 2) return;
-      var now = Date.now();
-      if (now - looked < WATCH_EVERY) return;
-      looked = now;
-      var about = seen.check(match$1.describe(match$1.selected(tracks_now)));
-      if (about) bumpVoice(voice.studio(about.label), PICK_WEIGHT);
-    }
-
-    /**
-     * @param {string} name - студия
-     * @param {number} weight - насколько это весомое свидетельство
-     */
-    function bumpVoice(name, weight) {
-      if (!name) return;
-      var rating = Lampa.Storage.get(keys.KEYS.voices, '{}') || {};
-      rating[name] = (rating[name] || 0) + weight;
-      var names = Object.keys(rating);
-
-      // Затухание: свежие предпочтения должны весить больше давних, иначе
-      // студия, которую смотрели три года назад, останется лидером навсегда.
-      var total = names.reduce(function (sum, name) {
-        return sum + rating[name];
-      }, 0);
-      if (total > 40) {
-        names.forEach(function (name) {
-          rating[name] = rating[name] / 2;
-          if (rating[name] < 1) delete rating[name];
-        });
-      }
-
-      // держим только заметные студии, чтобы ключ не разрастался
-      names = Object.keys(rating).sort(function (a, b) {
-        return rating[b] - rating[a];
-      });
-      if (names.length > 30) {
-        names.slice(30).forEach(function (name) {
-          delete rating[name];
-        });
-      }
-      Lampa.Storage.set(keys.KEYS.voices, rating);
+      return rating;
     }
 
     /**
