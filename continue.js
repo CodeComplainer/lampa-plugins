@@ -1,6 +1,306 @@
 (function () {
     'use strict';
 
+    /**
+     * Память по тайтлу: как этот сериал или фильм смотрели в прошлый раз.
+     *
+     * Одна запись на карточку вместо разрозненных ключей — название для поиска,
+     * студия, качество и аудиодорожка живут вместе, потому что нужны вместе:
+     * запустить «как в прошлый раз» — это все четыре сразу.
+     *
+     * Хранилище задаётся снаружи, чтобы логику вытеснения можно было проверить
+     * тестами без запущенного приложения.
+     */
+
+    var KEY = 'watch_memory';
+
+    /**
+     * Сколько тайтлов помним.
+     *
+     * Хранить всё незачем: смысл памяти в том, чтобы человек, вернувшийся
+     * к сериалу, попал в привычные настройки. Запись — около сотни байт,
+     * так что потолок упирается в разумные ~20 КБ и дальше не растёт.
+     */
+    var LIMIT = 200;
+
+    /** Сколько запросов на карточку оставляем в штатном списке уточнения */
+    var CLARIFY_KEEP = 5;
+
+    /**
+     * Ключ — карточка целиком, а не отдельная серия: и озвучку, и название
+     * для поиска выбирают на сериал, а не на каждый эпизод.
+     */
+    function cardID$1(card) {
+      if (!card || !card.id) return null;
+      var tv = card.number_of_seasons || card.original_name || card.first_air_date;
+      return card.id + ':' + (tv ? 'tv' : 'movie');
+    }
+
+    /**
+     * @param {Object} storage - Lampa.Storage или его подмена в тестах
+     */
+    function create(storage) {
+      function all() {
+        return storage.cache(KEY, LIMIT, {});
+      }
+
+      /**
+       * Storage.cache вытесняет по порядку вставки, а не по обращению, поэтому
+       * запись перекладывается в конец при каждом использовании — иначе давно
+       * заведённый, но активно смотримый сериал вытеснился бы первым.
+       */
+      function touch(map, key) {
+        var keys = Object.keys(map);
+
+        // уже последняя — переписывать хранилище незачем
+        if (keys[keys.length - 1] === key) return;
+        var rec = map[key];
+        delete map[key];
+        map[key] = rec;
+        storage.set(KEY, map);
+      }
+
+      /**
+       * @returns {{q: string, v: string, r: number, a: {l: string, n: string}, t: number}|null}
+       *
+       * q — название, по которому нашлись раздачи
+       * v — студия озвучки
+       * r — разрешение
+       * a — аудиодорожка: язык и название
+       * t — когда запись трогали в последний раз
+       */
+      function get(card) {
+        var key = cardID$1(card);
+        if (!key) return null;
+        var map = all();
+        var rec = map[key];
+        if (!rec) return null;
+        touch(map, key);
+        return rec;
+      }
+      function set(card, patch) {
+        var key = cardID$1(card);
+        if (!key || !patch) return null;
+        var map = all();
+        var rec = map[key] || {};
+        Object.keys(patch).forEach(function (name) {
+          if (patch[name] !== undefined && patch[name] !== null) rec[name] = patch[name];
+        });
+        rec.t = patch.t || Date.now();
+        delete map[key];
+        map[key] = rec;
+        storage.set(KEY, map);
+        return rec;
+      }
+
+      /**
+       * Перенос из ключей, которыми пользовались отдельные плагины до объединения.
+       *
+       * Разбирается один раз: после переноса старые ключи удаляются, и повторный
+       * вызов уже ничего не находит.
+       *
+       * Внимание на `q` у continue_last — там лежало разрешение, а не название.
+       */
+      function migrate() {
+        var map = all();
+        var moved = 0;
+        var last = storage.cache('continue_last', 150, {});
+        Object.keys(last).forEach(function (key) {
+          var rec = map[key] = map[key] || {};
+          if (last[key].v && !rec.v) rec.v = last[key].v;
+          if (last[key].q && !rec.r) rec.r = last[key].q;
+          if (!rec.t) rec.t = last[key].t || 0;
+          moved++;
+        });
+        var audio = storage.cache('audio_tracks', 200, {});
+        Object.keys(audio).forEach(function (key) {
+          var rec = map[key] = map[key] || {};
+          if (!rec.a && (audio[key].l || audio[key].n)) rec.a = {
+            l: audio[key].l,
+            n: audio[key].n
+          };
+          if (!rec.t) rec.t = audio[key].t || 0;
+          moved++;
+        });
+        if (!moved) return 0;
+        storage.set(KEY, map);
+        storage.set('continue_last', {});
+        storage.set('audio_tracks', {});
+        return moved;
+      }
+
+      /**
+       * Продублировать рабочее название в штатный список уточнения.
+       *
+       * Ключ `user_clarifys` синхронизируется через CUB и читается обычным экраном
+       * торрентов ([filter.js:36](src/interaction/filter.js:36)), поэтому название
+       * всплывает первым и на другом устройстве — короче становится и нативный путь,
+       * а не только наша кнопка.
+       *
+       * Свою карточку заодно подрезаем: штатный код дописывает туда запросы
+       * вообще без ограничения.
+       */
+      function clarify(card, query, keep) {
+        if (!card || !card.id || !query) return;
+        var all = storage.get('user_clarifys', '{}') || {};
+        var list = (all[card.id] || []).filter(function (item) {
+          return item !== query;
+        });
+        list.push(query);
+        all[card.id] = list.slice(-(keep || CLARIFY_KEEP));
+        storage.set('user_clarifys', all);
+      }
+
+      /**
+       * Последнее название, которое человек вводил руками на экране торрентов.
+       *
+       * Своей записи может не быть: в память название попадает по факту запуска
+       * файла, а уточнить поиск и уйти, ничего не включив, — обычное дело.
+       * Штатный список при этом уже всё запомнил, и не воспользоваться этим
+       * значит заставить человека уточнять поиск заново.
+       */
+      function lastClarify(card) {
+        if (!card || !card.id) return null;
+        var list = (storage.get('user_clarifys', '{}') || {})[card.id] || [];
+        return list[list.length - 1] || null;
+      }
+      return {
+        get: get,
+        set: set,
+        migrate: migrate,
+        clarify: clarify,
+        lastClarify: lastClarify,
+        cardID: cardID$1,
+        KEY: KEY,
+        LIMIT: LIMIT
+      };
+    }
+    var store = {
+      create: create,
+      cardID: cardID$1,
+      KEY: KEY,
+      LIMIT: LIMIT
+    };
+
+    /**
+     * Названия, по которым имеет смысл искать раздачи.
+     *
+     * Название карточки и трекерное название совпадают далеко не всегда: корейский
+     * сериал «Суперчудаки» (원더풀스) лежит на трекерах как «Суперглупцы», и ни одно
+     * из двух названий карточки не находит ничего. Поэтому поиск идёт каскадом:
+     * привычное название, затем альтернативные из TMDB.
+     */
+
+    /**
+     * Признак `clarification` важнее, чем кажется: без него поиск дополнительно
+     * фильтруется по названиям самой карточки ([parser.js:302](src/core/api/sources/parser.js:302)),
+     * и чужое название гарантированно даёт пустую выдачу. Проверено на живых
+     * данных: «Суперглупцы» без него — 0 раздач, с ним — 4.
+     */
+    function candidates(card, opts) {
+      opts = opts || {};
+      var out = [];
+      var seen = {};
+      function push(query, clarification) {
+        query = clean(query);
+        if (!query) return;
+        var low = query.toLowerCase();
+        if (seen[low]) return;
+        seen[low] = true;
+        out.push({
+          query: query,
+          clarification: !!clarification
+        });
+      }
+
+      // Название, которым раздача нашлась в прошлый раз, — самое надёжное:
+      // человек уже смотрел этот тайтл именно по нему.
+      push(opts.remembered, true);
+      push(primary(card, opts.parse_lang), false);
+      push(title(card), false);
+      push(original(card), false);
+      alternatives(card, opts.lang).forEach(function (name) {
+        push(name, true);
+      });
+      return out;
+    }
+
+    /**
+     * Запрос, который строит штатная кнопка торрентов
+     * ([full/start/torrents.js:14](src/components/full/start/torrents.js:14)).
+     *
+     * Повторяем её точь-в-точь: если человек привык, что обычный список раздач
+     * что-то находит, кнопка «Смотреть» обязана находить то же самое.
+     */
+    function primary(card, parse_lang) {
+      var lg = title(card);
+      var df = original(card);
+      var year = yearOf(card);
+      var combinations = {
+        df: df,
+        df_year: df + ' ' + year,
+        df_lg: df + ' ' + lg,
+        df_lg_year: df + ' ' + lg + ' ' + year,
+        lg: lg,
+        lg_year: lg + ' ' + year,
+        lg_df: lg + ' ' + df,
+        lg_df_year: lg + ' ' + df + ' ' + year
+      };
+      return combinations[parse_lang || 'df'] || df || lg;
+    }
+
+    /**
+     * Стоит ли запоминать название.
+     *
+     * То, что и так строится из карточки, хранить незачем: место в памяти
+     * ограничено, и занимать его очевидным — значит вытеснять полезное.
+     */
+    function worth(card, query, parse_lang) {
+      return !!clean(query) && clean(query) !== primary(card, parse_lang);
+    }
+
+    /**
+     * Альтернативные названия из TMDB.
+     *
+     * Форма ответа зависит от типа: у сериалов это `results`, у фильмов `titles`.
+     * Штатный список уточнения читает только `titles`
+     * ([filter.js:76](src/interaction/filter.js:76)), поэтому для сериалов он
+     * альтернативных названий не показывает вовсе — приходится доставать самим.
+     *
+     * Свой язык идёт раньше английского: русские раздачи чаще подписаны русским
+     * альтернативным названием.
+     */
+    function alternatives(card, lang) {
+      var block = card && card.alternative_titles;
+      if (!block) return [];
+      var list = block.results || block.titles || [];
+      var own = [];
+      var english = [];
+      list.forEach(function (item) {
+        var code = ((item.iso_3166_1 || '') + '').toLowerCase();
+        if (lang && code === lang) own.push(item.title);else if (code === 'us') english.push(item.title);
+      });
+      return own.concat(english);
+    }
+    function title(card) {
+      return clean(card && (card.title || card.name) || '');
+    }
+    function original(card) {
+      return clean(card && (card.original_title || card.original_name) || '');
+    }
+    function yearOf(card) {
+      return ((card && (card.first_air_date || card.release_date) || '0000') + '').slice(0, 4);
+    }
+    function clean(value) {
+      return ((value || '') + '').trim();
+    }
+    var titles = {
+      candidates: candidates,
+      primary: primary,
+      alternatives: alternatives,
+      worth: worth
+    };
+
     var Voices = ["Анастасия Гайдаржи + Андрей Юрченко", "Студии Суверенного Лепрозория", "Студия Пиратского Дубляжа", "IgVin &amp; Solncekleshka", "Gremlin Creative Studio", "Alternative Production", "HelloMickey Production", "Bubble Dubbing Company", "Н.Севастьянов seva1988", "XDUB Dorama + Колобок", "Мобильное телевидение", "СПД - Сладкая парочка", "Selena International", "Black Street Records", "Intra Communications", "BBC Saint-Petersburg", "Melodic Voice Studio", "Voice Project Studio", "Несмертельное оружие", "Петербургский дубляж", "Studio Victory Аsia", "Asian Miracle Group", "True Dubbing Studio", "Lizard Cinema Trade", "National Geographic", "Позитив-Мультимедиа", "Премьер Мультимедиа", "Уолт Дисней Компани", "Parovoz Production", "Shadow Dub Project", "Zone Vision Studio", "Анастасия Гайдаржи", "The Kitchen Russia", "Малиновский Сергей", "Family Fan Edition", "Paramount Pictures", "Иванова и П. Пашут", "Так Треба Продакшн", "Хихикающий доктор", "Четыре в квадрате", "Project Web Mania", "Paramount Channel", "Back Board Cinema", "Zoomvision Studio", "Universal Channel", "RedDiamond Studio", "НеЗупиняйПродакшн", "Селена Интернешнл", "Студия «Стартрек»", "Колодій Трейлерів", "Universal Russia", "Paramount Comedy", "Андрей Питерский", "Реальный перевод", "MC Entertainment", "Екатеринбург Арт", "Lucky Production", "Cowabunga Studio", "Анатолий Ашмарин", "Васька Куролесов", "Brain Production", "Квадрат Малевича", "Первый канал ОРТ", "Русский Репортаж", "Сolumbia Service", "Sunshine Studio", "GreenРай Studio", "New Dream Media", "DeadLine Studio", "Воробьев Сергей", "DeeAFilm Studio", "Николай Дроздов", "Денис Шадинский", "Cartoon Network", "Amazing Dubbing", "Volume-6 Studio", "Антонов Николай", "Ульпаней Эльром", "Cinema Prestige", "AnimeSpace Team", "CinemaSET GROUP", "XvidClub Studio", "З Ранку До Ночі", "Максим Логинофф", "Студия Горького", "Ушастая озвучка", "Hamster Studio", "Agatha Studdio", "SunshineStudio", "Kulzvuk Studio", "Вартан Дохалов", "Viasat History", "DIVA Universal", "KosharaSerials", "Julia Prosenuk", "SovetRomantica", "Mallorn Studio", "TUMBLER Studio", "CrazyCatStudio", "Syfy Universal", "Horizon Studio", "Анатолий Гусев", "Максим Жолобов", "RedRussian1337", "Creative Sound", "Garsu Pasaulis", "visanti-vasaer", "GoodTime Media", "Кирдин | Stalk", "Anything-group", "Goodtime Media", "Jakob Bellmann", "Витя «говорун»", "Л. Володарский", "Леша Прапорщик", "Медиа-Комплекс", "Прайд Продакшн", "Русский дубляж", "Союзмультфильм", "Студия Колобок", "Red Head Sound", "LE-Production", "ViruseProject", "Victory-Films", "Jetvis Studio", "Greb&Creative", "5-й канал СПб", "Dream Records", "Filiza Studio", "SHIZA Project", "Bars MacAdams", "Nazel & Freya", "Vulpes Vulpes", "Храм Дорам ТВ", "АРК-ТВ Studio", "Film Prestige", "Rainbow World", "Banyan Studio", "Bonsai Studio", "Мадлен Дюваль", "VO-Production", "Voice Project", "Flarrow Films", "Видеопродакшн", "Хоррор Мэйкер", "Lizard Cinema", "Фортуна-Фильм", "VIP Serial HD", "Старый Бильбо", "Семыкина Юлия", "Штамп Дмитрий", "Arasi project", "ARRU Workshop", "Byako Records", "FiliZa Studio", "Gezell Studio", "HamsterStudio", "PCB Translate", "Renegade Team", "Sci-Fi Russia", "The Mike Rec.", "VO-production", "Мика Бондарик", "Наталья Гурзо", "Премьер Видео", "Трамвай-фильм", "Кубик в Кубе", "Кураж-Бамбей", "Первый канал", "Trdlo.studio", "Студия Райдо", "AniLibria.TV", "RG.Paravozik", "Profix Media", "AlphaProject", "AnimeReactor", "Кармен Видео", "Korean Craze", "Sony Channel", "Train Studio", "Фильмэкспорт", "Кирилл Сагач", "ViP Premiere", "Деваль Видео", "RussianGuy27", "HaseRiLLoPaW", "Сергей Дидок", "Mystery Film", "Psychotronic", "КонтентикOFF", "Говинда Рага", "Horror Maker", "Альтера Парс", "Видеоимпульс", "Мьюзик-трейд", "Тоникс Медиа", "Элегия фильм", "Oneinchnales", "Кинопремьера", "A. Lazarchuk", "Animereactor", "BadCatStudio", "DreamRecords", "General Film", "Ivnet Cinema", "RG Paravozik", "sweet couple", "VictoryFilms", "VulpesVulpes", "Wayland team", "Гей Кино Гид", "Нурмухаметов", "Е. Хрусталёв", "К. Поздняков", "Н. Золотухин", "Новый Дубляж", "Р. Янкелевич", "С. Кузьмичёв", "С. Щегольков", "Синема Трейд", "Синта Рурони", "Точка Zрения", "КОМНАТА ДИДИ", "FocusStudio", "Gears Media", "GladiolusTV", "RecentFilms", "NEON Studio", "Володарский", "Мастер Тэйп", "XDUB Dorama", "Sound-Group", "Sony Sci-Fi", "Good People", "JWA Project", "Nika Lenina", "RiZZ_fisher", "New Records", "КураСгречей", "Неоклассика", "CrezaStudio", "Видеосервис", "BTI Studios", "Eurochannel", "Варус-Видео", "HiWay Grope", "Эй Би Видео", "Nickelodeon", "StudioFilms", "Paul Bunyan", "Inter Video", "Franek Monk", "Другое кино", "Севастьянов", "Lazer Video", "Max Nabokov", "Завгородний", "SnowRecords", "Crunchyroll", "Gold Cinema", "Прямостанов", "Огородников", "Кенс Матвей", "1001 cinema", "Cactus Team", "Description", "DVD Classic", "Gala Voices", "hungry_inri", "Neoclassica", "Oghra-Brown", "Rebel Voice", "Saint Sound", "SakuraNight", "TF-AniGroup", "TrainStudio", "Zone Studio", "Zone Vision", "Варус Видео", "Г. Либергал", "Г. Румянцев", "Е. Гаевский", "И. Сафронов", "И. Степанов", "Лазер Видео", "Малиновский", "Новый Канал", "Петербуржец", "С. Визгунов", "С. Кузнецов", "Студия Трёх", "Цікава Ідея", "Я. Беллманн", "Studio Band", "ApofysTeam", "Карповский", "LevshaFilm", "1001cinema", "CP Digital", "Интерфильм", "Комедия ТВ", "Ох! Студия", "SilverSnow", "NewStation", "StudioBand", "Rain Death", "Первый ТВЧ", "HiWayGrope", "Animegroup", "Shachiburi", "CactusTeam", "Sony Turbo", "AXN Sci-Fi", "Т.О Друзей", "West Video", "East Dream", "Sound Film", "MaxMeister", "VoicePower", "CoralMedia", "VSI Moscow", "VGM Studio", "Студия NLS", "Хуан Рохас", "TatamiFilm", "диктор CDV", "Pazl Voice", "Саня Белый", "Мост-Видео", "AimaksaLTV", "Contentica", "Инфо-фильм", "Электричка", "Бусов Глеб", "AvePremier", "BraveSound", "CinemaTone", "DniproFilm", "ELEKTRI4KA", "eraserhead", "Fox Russia", "Mega-Anime", "MifSnaiper", "Nice-Media", "PiratVoice", "Postmodern", "Reanimedia", "Sky Voices", "SkyeFilmTV", "Костюкевич", "Толстобров", "Б. Федоров", "Ващенко С.", "Глуховский", "Держиморда", "Е. Гранкин", "И. Еремеев", "К. Филонов", "Мост Видео", "Н. Антонов", "Н. Дроздов", "Новый диск", "Переводман", "С. Казаков", "С. Лебедев", "С. Макашов", "Союз Видео", "ТВ XXI век", "Ю. Немахов", "Dream Cast", "Причудики", "NewStudio", "Red Media", "Синема УС", "SDI Media", "CasStudio", "turok1990", "HighHopes", "AniLibria", "FanStudio", "Sedorelli", "Flux-Team", "Kobayashi", "KinoGolos", "Fox Crime", "Discovery", "GREEN TEA", "Persona99", "3df voice", "ShinkaDan", "АрхиТеатр", "СВ-Студия", "FilmsClub", "fiendover", "Воротилин", "LakeFilms", "Кириллица", "AniPLague", "JoyStudio", "Формат AB", "AveBrasil", "Невафильм", "OnisFilms", "Neo-Sound", "Муравский", "BeniAffet", "Янкелевич", "AveDorama", "Киномания", "CBS Drama", "Novamedia", "NewComers", "Ghostface", "Sephiroth", "Andre1288", "DoubleRec", "Astana TV", "Останкино", "Видеобаза", "CLS Media", "Seoul Bay", "Хрусталев", "Золотухин", "Videogram", "AAA-Sound", "Epic Team", "GoodVideo", "Gramalant", "INTERFILM", "Kinomania", "No-Future", "RainDeath", "RATTLEBOX", "Sawyer888", "SmallFilm", "SOLDLUCK2", "SpaceDust", "Timecraft", "Total DVD", "Video-BIZ", "VIZ Media", "Васильцев", "Григорьев", "ААА-sound", "Амальгама", "Весельчак", "Деньщиков", "Шадинский", "ЕА Синема", "Зереницын", "И. Клушин", "Имидж-Арт", "Карапетян", "Машинский", "Мительман", "Рыжий пес", "С. Дьяков", "Самарский", "СВ Студия", "Советский", "Солодухин", "ТО Друзей", "Ю. Сербин", "Ю. Товбин", "AnimeVost", "Omskbird", "LostFilm", "AlexFilm", "IdeaFilm", "ColdFilm", "KinoView", "Jimmy J.", "Дольский", "Гаврилов", "Алексеев", "Визгунов", "Либергал", "Кузнецов", "Горчаков", "Gravi-TV", "Murzilka", "STEPonee", "NovaFilm", "Kerems13", "Fox Life", "AzOnFilm", "SorzTeam", "Гаевский", "СВ-Дубль", "GoldTeam", "DexterTV", "AniMedia", "ANIvoice", "JeFerSon", "RealFake", "AniMaunt", "TurkStar", "Медведев", "FilmGate", "Логинофф", "Loginoff", "Animedub", "GostFilm", "ClubFATE", "Hallmark", "Тимофеев", "Дьяконов", "Лексикон", "Superbit", "VideoBIZ", "WestFilm", "kubik&ko", "Марченко", "Журавлев", "Карусель", "Barin101", "Amalgama", "Кинолюкс", "AB-Video", "Пирамида", "Нарышкин", "Дубровин", "Махонько", "Хлопушка", "АрхиАзия", "Ultradox", "Мельница", "Бессонов", "Бахурани", "Индия ТВ", "AdiSound", "ALEKS KV", "AuraFilm", "DeadLine", "Extrabit", "Foxlight", "GetSmart", "ImageArt", "Marclail", "metalrus", "Milirina", "MiraiDub", "MOYGOLOS", "OMSKBIRD", "Radamant", "RoxMarty", "st.Elrom", "VashMax2", "VendettA", "XL Media", "Артемьев", "Васильев", "Савченко", "Воронцов", "Войсовер", "Домашний", "Е. Лурье", "Е. Рудой", "Ист-Вест", "ЛанселаП", "Ленфильм", "Заугаров", "Мосфильм", "Оверлорд", "С. Рябов", "Супербит", "Толмачев", "Ю. Живов", "Paradox", "BaibaKo", "Jaskier", "Колобок", "Михалев", "Дохалов", "SoftBox", "MUZOBOZ", "ZM-Show", "Levelin", "Немахов", "Яроцкий", "BadBajo", "СВ-Кадр", "Позитив", "RusFilm", "Назаров", "Сыендук", "Яковлев", "Lord32x", "Onibaku", "Trina_D", "Hamster", "AniFilm", "HDrezka", "ShowJet", "BukeDub", "SomeWax", "Anifilm", "TVShows", "РуФилмс", "Пифагор", "AniStar", "Netflix", "Octopus", "MixFilm", "Рутилов", "Elysium", "FireDub", "AveTurk", "Багичев", "Дасевич", "Twister", "Морозов", "Sam2007", "SesDizi", "AnyFilm", "Urasiko", "Wakanim", "Латышев", "Ващенко", "Сонотек", "Никитин", "Сонькин", "Кипарис", "Королёв", "RUSCICO", "Филонов", "Ошурков", "Герусов", "Пятница", "5 канал", "Amalgam", "Anistar", "AniWayt", "datynet", "DeadSno", "Eladiel", "ELYSIUM", "F-TRAIN", "FoxLife", "Janetta", "Kолобок", "LeDoyen", "Liga HQ", "lord666", "Macross", "McElroy", "NemFilm", "OpenDub", "PashaUp", "SOFTBOX", "To4kaTV", "TV 1000", "VicTeam", "ZM-SHOW", "Клюквин", "Матвеев", "Смирнов", "Бибиков", "Абдулов", "Данилов", "sf@irat", "Королев", "Люсьена", "Омикрон", "Парадиз", "Пепелац", "Синхрон", "Сокуров", "Хихидок", "AniBaza", "Ozz.tv", "Сербин", "Кравец", "SNK-TV", "Amedia", "Гоблин", "Kiitos", "Есарев", "Санаев", "Шварко", "Карцев", "Кашкин", "Мудров", "Иванов", "Котова", "Kansai", "ZEE TV", "AniDUB", "Ancord", "Berial", "Cuba77", "OSLIKt", "Tycoon", "Курдов", "Кошкин", "Stevie", "Лагута", "Кондор", "Киреев", "FocusX", "Пронин", "neko64", "Shaman", "GalVid", "D.I.M.", "Н-Кино", "Товбин", "binjak", "Акцент", "Козлов", "Нева-1", "Milvus", "Готлиб", "Zerzia", "Дьяков", "Вольга", "Строев", "Alezan", "ДиоНиК", "Стасюк", "TV1000", "NewDub", "Набиев", "Светла", "Nastia", "Emslie", "100 ТВ", "4u2ges", "Azazel", "BD CEE", "Boльгa", "den904", "Elegia", "Gemini", "Jetvis", "JimmyJ", "KANSAI", "kiitos", "L0cDoG", "LeXiKC", "Lisitz", "madrid", "Mikail", "MrRose", "Ozz TV", "Prolix", "RedDog", "Rumble", "Satkur", "Selena", "Suzaku", "WiaDUB", "WVoice", "Zendos", "Агапов", "Акопян", "Шуваев", "АБыГДе", "Акалит", "Альянс", "Анубис", "Anubis", "Арк-ТВ", "Бойков", "Вихров", "Векшин", "Гризли", "Гундос", "Пучков", "Живаго", "Жучков", "Зебуро", "Килька", "Лапшин", "Лизард", "Миняев", "НЕВА 1", "НЛО-TV", "Ракурс", "Россия", "С.Р.И.", "KOleso", "Гуртом", "ТВ СПб", "Швецов", "OnWave", "DZUSKI", "Kerob", "To4ka", "Чадов", "Живов", "ВГТРК", "Elrom", "Игмар", "Котов", "РенТВ", "Рыбин", "Ozeon", "Cmert", "Штейн", "zamez", "Гланц", "Белов", "Anika", "Lupin", "Ryc99", "ko136", "Рябов", "Amber", "Arisu", "DeMon", "Велес", "Акира", "Ворон", "Рудой", "С.Р.И", "Лайко", "D2Lab", "Jetix", "Попов", "Хабар", "Интер", "AniUA", "D2lab", "erogg", "IНТЕР", "JetiX", "PaDet", "RinGo", "seqw0", "SHIZA", "Solod", "ssvss", "Мишин", "АнВад", "Бигыч", "Рукин", "Штамп", "Новий", "Перец", "Райдо", "ТВЧ 1", "Laci", "ETV+", "Vano", "Jade", "RAIM", "Andy", "Нота", "Твин", "ИДДК", "Voiz", "CPIG", "Dice", "Gits", "ICTV", "jept", "KIHO", "Line", "SGEV", "Tori", "Troy", "Twix", "Чуев", "Инис", "Ирэн", "ТВ-3", "ТВИН", "ДТВ", "FOX", "НТВ", "СТС", "ICG", "ТВЦ", "2x2", "MTV", "Oni", "JAM", "AMS", "DDV", "AMC", "НСТ", "IVI", "КТК", "Че!", "MGM", "МИР", "ТНТ", "FDV", "ТВ3", "LDV", "1+1", "2+2", "2х2", "AOS", "CDV", "MCA", "QTV", "TB5", "VHS", "АМС", "ГКГ", "ИГМ", "НТН", "РТР", "ТВ6", "ТРК", "UKR", "D1", "R5", "К9"];
 
     /**
@@ -525,7 +825,12 @@
     function context(card, filter, params) {
       filter = filter || {};
       params = params || {};
-      var names = [card.original_title, card.original_name, card.title, card.name].filter(Boolean);
+
+      // Псевдонимы обязаны участвовать в проверке «тот ли это тайтл»: раздачу
+      // нашли по альтернативному названию, и названия карточки в её заголовке
+      // может не быть вовсе. Корейский сериал «Суперчудаки» (원더풀스) лежит
+      // на трекерах как «Суперглупцы» — без псевдонимов отсеивалось всё.
+      var names = [card.original_title, card.original_name, card.title, card.name].concat(toArray(params.aliases)).filter(Boolean);
       var year = ((card.release_date || card.first_air_date || '') + '').slice(0, 4);
       var quality = toArray(filter.quality).map(function (q) {
         return FILTER_QUALITY[q];
@@ -864,7 +1169,13 @@
     /**
      * «Продолжить» — кнопка на карточке, запускающая нужную серию из торрента
      * без ручного выбора раздачи и файла.
+     *
+     * Память по тайтлу (название для поиска, студия, качество) общая с плагином
+     * memory: делятся данными, но не кодом — каждый работает и без другого.
      */
+
+    /** Память по тайтлу, общая с плагином memory */
+    var memory = null;
 
     /**
      * Круговая стрелка с треугольником внутри — «продолжить просмотр».
@@ -887,6 +1198,12 @@
     function startPlugin() {
       if (window.plugin_continue_ready) return;
       window.plugin_continue_ready = true;
+      memory = store.create(Lampa.Storage);
+      try {
+        memory.migrate();
+      } catch (err) {
+        console.error('Continue', 'migrate error:', err);
+      }
       if (!document.getElementById('continue-style')) $('body').append(BUTTON_STYLE);
       Lampa.Listener.follow('full', function (e) {
         if (e.type !== 'complite') return;
@@ -897,18 +1214,34 @@
         }
       });
 
-      // Возврат на карточку после просмотра: событие 'full' повторно не приходит,
-      // а серия уже другая — подпись надо пересчитать, иначе она врёт.
+      // Возврат на карточку с другого экрана
       Lampa.Listener.follow('activity', function (e) {
         if (e.type !== 'start' || e.component !== 'full') return;
-        try {
-          var object = e.object;
-          var card = object.activity && object.activity.card || object.card || object.movie;
-          if (card && object.activity) hint(card, object.activity.render());
-        } catch (err) {
-          console.error('Continue', 'refresh error:', err);
-        }
+        refresh(e.object);
       });
+
+      // Закрытие плеера.
+      //
+      // Одного события активности мало: ни список файлов, ни сам плеер активностями
+      // не являются — это Modal поверх карточки. Досмотрев серию и выйдя назад,
+      // человек возвращается на ту же самую активность, 'start' не приходит,
+      // и подпись продолжает показывать прошлую серию.
+      Lampa.Player.listener.follow('destroy', function () {
+        var active = Lampa.Activity.active();
+        if (active && active.component === 'full') refresh(active);
+      });
+    }
+
+    /**
+     * Пересчитать подпись у уже нарисованной кнопки.
+     */
+    function refresh(object) {
+      try {
+        var card = object && (object.card || object.movie) || null;
+        if (card && object.activity) hint(card, object.activity.render());
+      } catch (err) {
+        console.error('Continue', 'refresh error:', err);
+      }
     }
 
     /**
@@ -978,11 +1311,12 @@
       var cache = Lampa.Storage.cache('continue_probe', 100, {});
       var cached = cache[key];
       if (cached && Date.now() - cached.t < PROBE_TTL) return done(cached.ok);
-      search(card, function (results) {
+      search(card, function (results, query) {
         var out = pick$1.pick(results, pick$1.context(card, cardFilter(card), {
           season: decision.season,
           episode: decision.episode,
-          no_cam: Lampa.Storage.field('continue_no_cam') !== false
+          no_cam: Lampa.Storage.field('continue_no_cam') !== false,
+          aliases: aliases(card, query)
         }));
         var ok = out.list.length > 0;
         remember(key, ok);
@@ -1094,53 +1428,79 @@
       Lampa.Loading.start(function () {
         return Lampa.Loading.stop();
       });
-      search(card, function (results) {
+      search(card, function (results, query) {
         var filter = cardFilter(card);
         var params = {
           season: decision.season,
           episode: decision.episode,
           no_cam: Lampa.Storage.field('continue_no_cam') !== false,
           last: lastRelease(card),
-          voice_rating: Lampa.Storage.get('continue_voices', '{}') || null
+          voice_rating: Lampa.Storage.get('continue_voices', '{}') || null,
+          aliases: aliases(card, query)
         };
         var out = pick$1.pick(results, pick$1.context(card, filter, params));
         Lampa.Loading.stop();
         if (!out.list.length) return nothingFound(card, out);
-        if (needAsk(card, out)) return choose(card, out, decision);
-        launch(card, out.list[0], decision);
+        if (needAsk(card, out)) return choose(card, out, decision, query);
+        launch(card, out.list[0], decision, query);
       }, function () {
         Lampa.Loading.stop();
         notice('continue_error_search');
       });
     }
 
+    /** Сколько названий пробуем, прежде чем признать, что раздач нет */
+    var MAX_QUERIES = 5;
+
     /**
-     * Поиск раздач. Комбинация запроса собирается так же, как это делает
-     * штатная кнопка торрентов, чтобы результаты совпадали с привычными.
+     * Все названия, под которыми тайтл может встретиться в заголовке раздачи.
+     *
+     * Нужны отбору: проверка «тот ли это тайтл» ищет название карточки в заголовке,
+     * а раздачу мы могли найти по совсем другому названию.
+     */
+    function aliases(card, query) {
+      return [query].concat(titles.alternatives(card, Lampa.Storage.field('language'))).filter(Boolean);
+    }
+
+    /**
+     * Поиск раздач.
+     *
+     * Первым идёт запрос штатной кнопки торрентов — чтобы привычная выдача
+     * оставалась привычной. Если он пуст, перебираем остальные названия тайтла:
+     * трекерное название совпадает с названием карточки далеко не всегда, и без
+     * перебора кнопка на таких сериалах просто мертва.
+     *
+     * @param {Function} done - (results, query) — по какому названию нашлось
      */
     function search(card, done, fail) {
-      var year = ((card.first_air_date || card.release_date || '0000') + '').slice(0, 4);
-      var combinations = {
-        df: card.original_title,
-        df_year: card.original_title + ' ' + year,
-        df_lg: card.original_title + ' ' + card.title,
-        df_lg_year: card.original_title + ' ' + card.title + ' ' + year,
-        lg: card.title,
-        lg_year: card.title + ' ' + year,
-        lg_df: card.title + ' ' + card.original_title,
-        lg_df_year: card.title + ' ' + card.original_title + ' ' + year
-      };
+      var rec = memory.get(card);
+      var list = titles.candidates(card, {
+        remembered: rec && rec.q,
+        parse_lang: Lampa.Storage.field('parse_lang'),
+        lang: Lampa.Storage.field('language')
+      }).slice(0, MAX_QUERIES);
       var title = card.title || card.name;
       var original = card.original_title || card.original_name;
-      Lampa.Parser.get({
-        movie: card,
-        search: combinations[Lampa.Storage.field('parse_lang')] || original || title,
-        search_one: title,
-        search_two: original,
-        page: 1
-      }, function (data) {
-        return done(data && data.Results || []);
-      }, fail);
+      var index = 0;
+      next();
+      function next() {
+        if (index >= list.length) return done([], null);
+        var candidate = list[index++];
+        Lampa.Parser.get({
+          movie: card,
+          search: candidate.query,
+          search_one: title,
+          search_two: original,
+          clarification: candidate.clarification,
+          page: 1
+        }, function (data) {
+          var results = data && data.Results || [];
+          if (results.length) return done(results, candidate.query);
+          next();
+        },
+        // Не «названия не подошли», а поиск недоступен — перебор бессмыслен.
+        fail);
+      }
     }
 
     /**
@@ -1173,12 +1533,11 @@
      * максимально похожую, а не начинаем выбор заново.
      */
     function lastRelease(card) {
-      var all = Lampa.Storage.cache('continue_last', 150, {});
-      var rec = all[cardID(card)];
+      var rec = memory.get(card);
       if (!rec) return null;
       return {
         voice: rec.v || null,
-        resolution: rec.q || null
+        resolution: rec.r || null
       };
     }
 
@@ -1197,18 +1556,24 @@
       viewed.push(hash);
       Lampa.Storage.set('torrents_view', viewed);
     }
-    function rememberRelease(card, cand) {
-      var all = Lampa.Storage.cache('continue_last', 150, {});
-      var cid = cardID(card);
 
-      // перекладываем в конец: Storage.cache вытесняет по порядку вставки
-      delete all[cid];
-      all[cid] = {
+    /**
+     * Чем и по какому названию смотрели — в общую память тайтла.
+     *
+     * Название сохраняем только нестандартное: обычное и так строится из карточки,
+     * и занимать им место значит вытеснять что-то полезное.
+     */
+    function rememberRelease(card, cand, query) {
+      memory.set(card, {
         v: cand.parsed.voices[0] || null,
-        q: cand.parsed.resolution || null,
-        t: Date.now()
-      };
-      Lampa.Storage.set('continue_last', all);
+        r: cand.parsed.resolution || null
+      });
+      if (titles.worth(card, query, Lampa.Storage.field('parse_lang'))) {
+        memory.set(card, {
+          q: query
+        });
+        memory.clarify(card, query);
+      }
       countVoice(cand);
     }
 
@@ -1359,7 +1724,7 @@
      * Уверенности нет — короткий список лучших вариантов.
      * Пять строк на пульте пролистываются быстрее, чем сотня раздач с фильтрами.
      */
-    function choose(card, out, decision) {
+    function choose(card, out, decision, query) {
       var top = out.list.slice(0, 5);
       var items = top.map(function (cand) {
         return {
@@ -1387,7 +1752,7 @@
           Lampa.Controller.toggle('full_start');
           if (item.open_torrents) return openTorrents(card);
           rememberVoice(card, item.cand);
-          launch(card, item.cand, decision);
+          launch(card, item.cand, decision, query);
         },
         onBack: function onBack() {
           return Lampa.Controller.toggle('full_start');
@@ -1464,8 +1829,8 @@
       all[cid] = filter;
       Lampa.Storage.set('torrents_filter_data', all);
     }
-    function launch(card, cand, decision) {
-      rememberRelease(card, cand);
+    function launch(card, cand, decision, query) {
+      rememberRelease(card, cand, query);
       var want = decision.season && decision.episode ? {
         season: decision.season,
         episode: decision.episode
