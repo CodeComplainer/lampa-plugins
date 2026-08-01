@@ -955,6 +955,10 @@
       // почти всегда лежит там же, где предыдущая, и переключать релиз посреди
       // сезона незачем.
       if (hasEpisode(cand, ctx)) s += 400;
+
+      // Именно та раздача, которую смотрели по этому тайтлу. Сильнее всего
+      // остального вместе взятого: тут гадать не о чем, это она и есть.
+      if (isSameRelease(cand, ctx)) s += 1000;
       if (cand.viewed) s += 300;
 
       // Раздача, похожая на прошлую. Привычное качество важнее максимального:
@@ -987,9 +991,28 @@
      * не о чем: продолжаем ровно там, где остановились.
      */
     function sameRelease(list, ctx) {
-      return list.find(function (cand) {
+      var exact = list.find(function (cand) {
+        return isSameRelease(cand, ctx) && hasEpisode(cand, ctx);
+      });
+
+      // Штатная пометка «эту раздачу открывали» — общая на все тайтлы и без
+      // порядка ([parser.js:286](src/core/api/sources/parser.js:286)), поэтому
+      // годится лишь как запасной признак: свой хеш точнее.
+      return exact || list.find(function (cand) {
         return cand.viewed && hasEpisode(cand, ctx);
       }) || null;
+    }
+
+    /**
+     * Та самая раздача, которую запускали по этому тайтлу в прошлый раз.
+     *
+     * Опознаём по хешу из выдачи парсера — на нём же держится вся штатная механика
+     * пометок. Не все трекеры его отдают; тогда сравнивать нечего, и работает
+     * обычный подбор.
+     */
+    function isSameRelease(cand, ctx) {
+      if (!ctx.last || !ctx.last.hash) return false;
+      return !!cand.raw.hash && cand.raw.hash === ctx.last.hash;
     }
 
     /**
@@ -1892,7 +1915,8 @@
       if (!rec) return null;
       return {
         voice: voice.prefer(rec, Lampa.Storage.field('parse_lang')),
-        resolution: rec.r || null
+        resolution: rec.r || null,
+        hash: rec.h || null
       };
     }
 
@@ -1921,7 +1945,10 @@
     function rememberRelease(card, cand, query) {
       memory.set(card, {
         v: cand.parsed.voices[0] || null,
-        r: cand.parsed.resolution || null
+        r: cand.parsed.resolution || null,
+        // Сама раздача, а не приметы. Штатная пометка «открывали» общая на все
+        // тайтлы и без порядка, так что «ту самую» помним сами.
+        h: cand.raw.hash || null
       });
       if (titles.worth(card, query, Lampa.Storage.field('parse_lang'))) {
         memory.set(card, {
