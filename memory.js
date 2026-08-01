@@ -74,6 +74,28 @@
     }
 
     /**
+     * Приметы всего списка: языки в том же порядке.
+     *
+     * Нужны, чтобы понять, та ли это раздача. Названия дорожек приходят не от
+     * плеера, а от стороннего плагина `tracks`, который дописывает `label`
+     * в объекты дорожек. Он может отвалиться — у нас так и вышло, когда умер
+     * домен `cub.red`, — и тогда от дорожки остаётся один язык, а двух русских
+     * озвучек это не различает.
+     *
+     * Зато если список тот же, то и файл тот же, и номер дорожки в нём осмыслен.
+     * Проверка дешёвая и честная: разошёлся порядок или число дорожек — значит
+     * раздача другая, и номеру верить нельзя.
+     *
+     * @param {Array} tracks
+     * @returns {string} например `ru,ru,en`
+     */
+    function shape(tracks) {
+      return (tracks || []).filter(Boolean).map(function (track) {
+        return language(track.language || track.lang || '');
+      }).join(',');
+    }
+
+    /**
      * Код языка приходит в разном виде: в браузере двухбуквенный (`ru`),
      * на webOS трёхбуквенный (`rus`). Без приведения запись, сделанная на одном
      * устройстве, не совпала бы с дорожками на другом.
@@ -128,7 +150,20 @@
           best = item.track;
         }
       });
+
+      // По названию ничего не нашлось — 3 балла и выше даёт только совпадение
+      // имени, всё что ниже держится на одном языке. Если список дорожек тот же,
+      // что и в прошлый раз, значит это та же раздача, и номер точнее языка:
+      // русских озвучек бывает две, и без номера берётся первая попавшаяся.
+      if (best_score < 3 && byIndex(list, saved)) return byIndex(list, saved);
       return best;
+    }
+
+    /** Дорожка по запомненному номеру — только если список не изменился */
+    function byIndex(list, saved) {
+      if (typeof saved.index !== 'number' || !saved.shape) return null;
+      if (saved.shape !== shape(list)) return null;
+      return list[saved.index] || null;
     }
 
     /**
@@ -238,6 +273,7 @@
     }
     var match$1 = {
       describe: describe,
+      shape: shape,
       match: match,
       compare: compare,
       selected: selected,
@@ -704,10 +740,7 @@
       if (!tracks || tracks.length < 2) return;
       var rec = current.card && memory.get(current.card);
       if (!rec || !rec.a) return;
-      var wanted = match$1.match(tracks, {
-        lang: rec.a.l || '',
-        label: rec.a.n || ''
-      });
+      var wanted = match$1.match(tracks, savedTrack(rec.a));
       if (!wanted || wanted === match$1.selected(tracks)) return;
 
       // Молча: плагин восстанавливает то, что человек сам и выбрал в прошлый раз,
@@ -721,14 +754,31 @@
      */
     function rememberTrack() {
       if (!current || !current.card || !current.tracks || current.tracks.length < 2) return;
-      var about = match$1.describe(match$1.selected(current.tracks));
+      var chosen = match$1.selected(current.tracks);
+      var about = match$1.describe(chosen);
       if (!about) return;
       memory.set(current.card, {
         a: {
           l: about.lang,
-          n: about.label
+          n: about.label,
+          // Номер дорожки и приметы списка. Названия приходят от стороннего
+          // плагина `tracks`, а он может быть не установлен — тогда от двух
+          // русских озвучек остаётся один язык, и различить их нечем. Но если
+          // список тот же, то и раздача та же, и номер точен.
+          i: current.tracks.indexOf(chosen),
+          k: match$1.shape(current.tracks)
         }
       });
+    }
+
+    /** Запомненное о дорожке в том виде, в каком его ждёт сопоставление */
+    function savedTrack(a) {
+      return {
+        lang: a.l || '',
+        label: a.n || '',
+        index: a.i,
+        shape: a.k || ''
+      };
     }
 
     /**
@@ -799,10 +849,7 @@
       if (!tracks || tracks.length < 2) return;
       var rec = current.card && memory.get(current.card);
       if (!rec || !rec.a) return;
-      var wanted = match$1.match(tracks, {
-        lang: rec.a.l || '',
-        label: rec.a.n || ''
-      });
+      var wanted = match$1.match(tracks, savedTrack(rec.a));
       if (!wanted) return;
 
       // здесь ждут порядковый номер в списке
