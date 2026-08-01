@@ -1,5 +1,18 @@
 {
     "hooks": {
+        "SessionStart": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node",
+                        "args": [".claude/hooks/lampa-index-refresh.mjs"],
+                        "timeout": 60,
+                        "statusMessage": "Реестр событий Lampa"
+                    }
+                ]
+            }
+        ],
         "PreToolUse": [
             {
                 "matcher": "Edit|Write|MultiEdit|NotebookEdit",

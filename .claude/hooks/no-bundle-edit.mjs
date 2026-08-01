@@ -28,7 +28,7 @@ function check() {
         `${name}.js в корне — собранный бандл, а не исходник. Правка потеряется ` +
         `при следующей сборке.\n` +
         `Исходники: ../lampa-source/plugins/${name}/\n` +
-        `Сборка: rm -f build/web/plugins/${name}.js && node tools/plugin-dev.js ${name}\n` +
+        `Сборка: node tools/plugin-dev.js ${name}\n` +
         `Копирование сюда: cp build/web/plugins/${name}.js ../lampa-plugins/${name}.js`
     )
 }
