@@ -21,9 +21,6 @@
     var COMPONENT = 'manager';
     var MANIFEST = REPO + 'plugins.json';
 
-    /** Плагин, который ставится сразу при установке менеджера */
-    var DEFAULT_PLUGIN = 'continue.js';
-
     /**
      * Запасной список на случай, если манифест недоступен: без сети менеджер
      * всё равно должен показывать хоть что-то.
@@ -47,9 +44,10 @@
       loadManifest(function (list) {
         catalog = list;
 
-        // Сначала ставим плагин, потом рисуем настройки: иначе переключатель
-        // запомнит состояние «выключен», которое было до установки.
-        bootstrap();
+        // Сначала приводим список плагинов в соответствие манифесту, потом
+        // рисуем настройки: иначе переключатель запомнит состояние «выключен»,
+        // которое было до установки.
+        reconcile(catalog);
         render(catalog);
       });
 
@@ -63,25 +61,97 @@
         if (e.name !== 'main') return;
         loadManifest(function (list) {
           catalog = list;
+          reconcile(catalog);
           render(catalog);
         });
       });
     }
 
     /**
-     * Первая установка: ставим основной плагин сам, чтобы после ввода единственного
-     * адреса всё уже работало. Флаг нужен, чтобы намеренно выключенный плагин
-     * не возвращался при каждом запуске.
+     * Привести список плагинов в соответствие манифесту.
+     *
+     * Три вещи, которые человек не должен делать руками на телевизоре:
+     * поставить появившийся плагин, переехать на переименованный и убрать
+     * исчезнувший. Пультом это мучительно, а знаний, что плагин переименовали,
+     * у человека вообще нет.
+     *
+     * Ключ `manager_seen` помнит, какие плагины менеджер уже предлагал. Без него
+     * пришлось бы выбирать между «новые плагины не появляются» и «выключенные
+     * возвращаются при каждом запуске».
      */
-    function bootstrap() {
-      if (Lampa.Storage.get('manager_bootstrapped')) return;
-      Lampa.Storage.set('manager_bootstrapped', true);
-      if (installed(DEFAULT_PLUGIN)) return;
-      var item = catalog.find(function (p) {
-        return p.file === DEFAULT_PLUGIN;
+    function reconcile(list) {
+      var seen = known();
+      var added = [];
+      list.forEach(function (item) {
+        // Переименование: плагин тот же, файл другой. Старый убираем всегда,
+        // а новый ставим, только если старый стоял — иначе это была бы
+        // установка без спроса.
+        var inherited = false;
+        toArray(item.replaces).forEach(function (old) {
+          var exist = installed(old);
+          if (!exist) return;
+          Lampa.Plugins.remove(exist);
+          inherited = true;
+        });
+        var first = seen.indexOf(item.file) === -1;
+        if (first) seen.push(item.file);
+        if (available(item) && !installed(item.file) && (inherited || first && item["default"] !== false)) {
+          install(item.file);
+          added.push(item.name || item.file);
+        }
       });
-      install(DEFAULT_PLUGIN);
-      Lampa.Noty.show(Lampa.Lang.translate('manager_installed') + ': ' + (item && item.name || DEFAULT_PLUGIN));
+
+      // Плагин пропал из манифеста — убираем и у себя. Трогаем только свои
+      // адреса: плагины, добавленные мимо менеджера, не наше дело.
+      Lampa.Plugins.get().slice().forEach(function (plugin) {
+        var file = ourFile(plugin.url);
+        if (!file || file === 'manager.js') return;
+        if (list.some(function (item) {
+          return item.file === file;
+        })) return;
+        Lampa.Plugins.remove(plugin);
+      });
+      Lampa.Storage.set('manager_seen', seen);
+      if (added.length) {
+        Lampa.Noty.show(Lampa.Lang.translate('manager_installed') + ': ' + added.join(', '));
+      }
+    }
+
+    /**
+     * Какие плагины менеджер уже предлагал.
+     *
+     * До появления этого ключа факт «первый запуск был» хранился одним флагом.
+     * Чтобы переход не выглядел как переустановка всего подряд, при первом чтении
+     * считаем уже предложенным всё, что стоит сейчас.
+     */
+    function known() {
+      var seen = Lampa.Storage.get('manager_seen', '');
+      if (Array.isArray(seen)) return seen;
+      return Lampa.Plugins.get().map(function (plugin) {
+        return ourFile(plugin.url);
+      }).filter(Boolean);
+    }
+
+    /**
+     * Имя файла, если адрес наш. Чужие плагины остаются нетронутыми.
+     */
+    function ourFile(url) {
+      var clean = (url + '').replace(/\?.*$/, '');
+      if (clean.indexOf(REPO) !== 0 && clean.indexOf(base()) !== 0) return null;
+      return clean.split('/').pop() || null;
+    }
+
+    /**
+     * Плагин, помеченный `local`, живёт только на машине разработчика и в
+     * репозиторий не публикуется — предлагать его при загрузке с GitHub нельзя,
+     * там его просто нет.
+     */
+    function available(item) {
+      return !item.local || Lampa.Storage.field('manager_source') === 'local';
+    }
+    function toArray(value) {
+      if (!value) return [];
+      return Array.isArray(value) ? value : [value];
     }
     function loadManifest(done) {
       var network = new Lampa.Reguest();
@@ -149,10 +219,10 @@
           type: 'title'
         },
         field: {
-          name: Lampa.Lang.translate('manager_plugins') + ' — ' + list.length
+          name: Lampa.Lang.translate('manager_plugins') + ' — ' + list.filter(available).length
         }
       });
-      list.forEach(function (item) {
+      list.filter(available).forEach(function (item) {
         var name = 'manager_on_' + item.file;
 
         // Переключатель обязан показывать факт, а не то, что осталось в памяти
@@ -240,10 +310,17 @@
       if (exist) Lampa.Plugins.remove(exist);
     }
 
-    /** Смена источника: переставляем всё включённое на новые адреса */
+    /**
+     * Смена источника: переставляем всё включённое на новые адреса.
+     *
+     * Плагины, которых в репозитории нет, при уходе с локального сервера
+     * отключаются — иначе после переключения они остались бы в списке
+     * с заведомо мёртвым адресом.
+     */
     function reinstallAll() {
       catalog.forEach(function (item) {
-        if (installed(item.file)) install(item.file);
+        if (!installed(item.file)) return;
+        if (available(item)) install(item.file);else uninstall(item.file);
       });
     }
     Lampa.Lang.add({
