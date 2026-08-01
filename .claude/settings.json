@@ -1,0 +1,31 @@
+{
+    "hooks": {
+        "PreToolUse": [
+            {
+                "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node",
+                        "args": [".claude/hooks/no-bundle-edit.mjs"],
+                        "timeout": 10
+                    }
+                ]
+            }
+        ],
+        "PostToolUse": [
+            {
+                "matcher": "Edit|Write|MultiEdit",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node",
+                        "args": [".claude/hooks/biome-on-save.mjs"],
+                        "timeout": 30,
+                        "statusMessage": "Biome"
+                    }
+                ]
+            }
+        ]
+    }
+}

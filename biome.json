@@ -30,9 +30,6 @@
             },
             "suspicious": {
                 "noAssignInExpressions": "off"
-            },
-            "complexity": {
-                "useOptionalChain": "off"
             }
         }
     },
