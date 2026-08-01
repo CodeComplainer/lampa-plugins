@@ -139,17 +139,20 @@
      */
     function ourFile(url) {
       var clean = (url + '').replace(/\?.*$/, '');
-      if (clean.indexOf(REPO) !== 0 && clean.indexOf(base()) !== 0) return null;
+      var ours = [REPO, base(), localBase()].filter(Boolean);
+      if (!ours.some(function (prefix) {
+        return clean.indexOf(prefix) === 0;
+      })) return null;
       return clean.split('/').pop() || null;
     }
 
     /**
-     * Плагин, помеченный `local`, живёт только на машине разработчика и в
-     * репозиторий не публикуется — предлагать его при загрузке с GitHub нельзя,
-     * там его просто нет.
+     * Плагин, помеченный `local`, в репозиторий не публикуется — предлагать его
+     * некуда, пока не задан адрес машины, где он лежит. Общий источник при этом
+     * не важен: остальные плагины продолжают приезжать с GitHub.
      */
     function available(item) {
-      return !item.local || Lampa.Storage.field('manager_source') === 'local';
+      return !item.local || !!localBase();
     }
 
     /**
@@ -223,7 +226,13 @@
           description: Lampa.Lang.translate('manager_host_descr')
         },
         onChange: function onChange() {
-          return reinstallAll();
+          reinstallAll();
+
+          // адрес открывает неопубликованные плагины, список меняется
+          render(catalog);
+          try {
+            Lampa.Settings.update();
+          } catch (_unused2) {}
         }
       });
       Lampa.SettingsApi.addParam({
@@ -292,13 +301,34 @@
     /** Откуда грузить плагины */
     function base() {
       if (Lampa.Storage.field('manager_source') !== 'local') return REPO;
+      return localBase() || REPO;
+    }
+
+    /** Машина разработчика, если её адрес задан */
+    function localBase() {
       var host = (Lampa.Storage.get('manager_local_host', '') + '').trim();
-      if (!host) return REPO;
+      if (!host) return '';
       if (!/^https?:\/\//.test(host)) host = 'http://' + host;
       return host.replace(/\/+$/, '') + '/plugins/';
     }
+
+    /**
+     * Откуда грузить конкретный плагин.
+     *
+     * Неопубликованный плагин всегда едет с машины разработчика, независимо от
+     * общего источника: иначе, чтобы включить отладку, пришлось бы переводить
+     * на локальную сборку и все остальные плагины — и они бы отвалились,
+     * как только компьютер выключен.
+     */
+    function baseFor(file) {
+      var item = catalog.find(function (p) {
+        return p.file === file;
+      });
+      if (item && item.local) return localBase();
+      return base();
+    }
     function urlFor(file) {
-      return base() + file;
+      return baseFor(file) + file;
     }
 
     /**
@@ -369,9 +399,9 @@
         uk: 'Адреса локального сервера'
       },
       manager_host_descr: {
-        ru: 'Например 192.168.1.10:3000 — компьютер, где запущена сборка',
-        en: 'For example 192.168.1.10:3000 — the machine running the build',
-        uk: 'Наприклад 192.168.1.10:3000 — комп’ютер зі складанням'
+        ru: 'Например 192.168.1.10:3000 — компьютер, где запущена сборка. Открывает плагины, которых нет в репозитории',
+        en: 'For example 192.168.1.10:3000 — the machine running the build. Unlocks plugins that are not published',
+        uk: 'Наприклад 192.168.1.10:3000 — комп’ютер зі складанням. Відкриває плагіни, яких немає в репозиторії'
       },
       manager_reload: {
         ru: 'Перезагрузить приложение',
