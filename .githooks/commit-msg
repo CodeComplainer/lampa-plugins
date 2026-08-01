@@ -1,0 +1,19 @@
+#!/bin/sh
+#
+# Сообщение коммита — тоже часть репозитория: Co-Authored-By или ссылка
+# осели бы в истории навсегда.
+
+. "$(dirname "$0")/identity.sh"
+
+found=$(grep -Eino "$FORBIDDEN" "$1" | head -3)
+
+if [ -n "$found" ]; then
+    echo ""
+    echo "  x В сообщении коммита есть строки, которых здесь быть не должно:"
+    echo ""
+    echo "$found" | sed 's/^/      /'
+    echo ""
+    exit 1
+fi
+
+exit 0

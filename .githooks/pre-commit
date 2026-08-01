@@ -1,0 +1,36 @@
+#!/bin/sh
+#
+# Не пускает в коммит ни постороннюю подпись, ни нежелательные строки в файлах.
+
+. "$(dirname "$0")/identity.sh"
+
+check_identity
+
+# Проверяем ровно то, что уходит в коммит, а не рабочее дерево:
+# в дереве могут лежать локальные файлы, которых в репозитории нет.
+files=$(git diff --cached --name-only --diff-filter=ACMR)
+
+[ -z "$files" ] && exit 0
+
+hits=''
+
+for file in $files; do
+    # бинарные файлы пропускаем
+    git diff --cached --numstat -- "$file" | grep -q '^-' && continue
+
+    found=$(git show ":$file" 2>/dev/null | grep -Eino "$FORBIDDEN" | head -3)
+
+    [ -n "$found" ] && hits="$hits\n  $file:\n$(echo "$found" | sed 's/^/      /')"
+done
+
+if [ -n "$hits" ]; then
+    echo ""
+    echo "  x В коммит попали строки, которых в этом репозитории быть не должно:"
+    printf "$hits\n"
+    echo ""
+    echo "    Уберите их или, если это ложное срабатывание, закоммитьте с --no-verify."
+    echo ""
+    exit 1
+fi
+
+exit 0
