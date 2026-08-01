@@ -2,6 +2,157 @@
     'use strict';
 
     /**
+     * Имена ключей в localStorage — единственное место, где они записаны.
+     *
+     * Пространство у Lampa плоское: ни префиксов, ни namespace, ни разделения по
+     * профилям. В нём живут ~155 ключей ядра и все ключи всех установленных
+     * плагинов сразу. Поэтому наши имена начинаются с `cc_`: `continue` и `manager`
+     * — обычные английские слова, и чужой плагин, взявший их же, молча испортил бы
+     * данные. Заодно всё наше находится и чистится одним грепом.
+     *
+     * Схема: `cc_<плагин>_<что>`, общие для нескольких плагинов данные — `cc_watch_*`.
+     *
+     * Чего в именах быть не должно: подстрок `online_`, `file_view_` и `storage_`.
+     * Штатная «Очистка кэша» стирает ключ, если такая подстрока встречается где
+     * угодно внутри имени, а не только в начале
+     * ([storage.js:288](src/core/storage/storage.js:288)).
+     */
+
+    var KEYS = {
+      /** Память по тайтлу, общая: memory пишет, continue и subpeek читают */
+      watch: 'cc_watch_memory',
+      /** Рейтинг студий озвучки с затуханием */
+      voices: 'cc_continue_voices',
+      /** Уже проверенные раздачи, чтобы не опрашивать их повторно */
+      probe: 'cc_continue_probe',
+      /** Отсекать ли экранки. Скрытый параметр, своего экрана настроек нет */
+      no_cam: 'cc_continue_no_cam',
+      /** Какие плагины менеджер уже предлагал */
+      seen: 'cc_manager_seen',
+      /** Источник плагинов: GitHub или локальный сервер */
+      source: 'cc_manager_source',
+      /** Адрес машины разработчика для локального режима */
+      local_host: 'cc_manager_local_host',
+      /** Префикс переключателя плагина, дальше идёт имя файла */
+      plugin_on: 'cc_manager_on_'
+    };
+
+    /**
+     * Прежние имена. Появились до того, как схема стала общей, и переносятся
+     * разово — при первом запуске плагина, который этим ключом пользуется.
+     */
+    var RENAMED = {
+      watch: 'watch_memory',
+      voices: 'continue_voices',
+      probe: 'continue_probe',
+      no_cam: 'continue_no_cam',
+      seen: 'manager_seen',
+      source: 'manager_source',
+      local_host: 'manager_local_host',
+      plugin_on: 'manager_on_'
+    };
+
+    /**
+     * Значение отсутствует.
+     *
+     * `Storage.get` для незаданного ключа возвращает пустую строку, а не
+     * `undefined`, и попутно приводит типы: `'false'` станет булевым `false`,
+     * а `'0'` — числом. Поэтому проверять можно только на пустую строку —
+     * иначе законный `false` посчитался бы отсутствующим.
+     */
+    function empty(value) {
+      return value === '' || value === undefined || value === null;
+    }
+
+    /**
+     * Перенести значения из старых ключей в новые.
+     *
+     * Идемпотентно: старый ключ после переноса удаляется, а если новый уже занят —
+     * старый его не затирает. Повторный вызов не находит ничего.
+     *
+     * Удаление идёт через `drop`, а не через `Lampa.Storage.remove`: тот снимает
+     * значение с синхронизации на сервере и localStorage не трогает вовсе
+     * ([storage.js:253](src/core/storage/storage.js:253)).
+     *
+     * @param {Object} storage - Lampa.Storage или его подмена в тестах
+     * @param {Function} drop - (name) => void, удаление ключа из localStorage
+     * @param {string[]} names - какие ключи переносить, имена полей KEYS
+     * @returns {number} сколько значений перенесено
+     */
+    function migrate(storage, drop, names) {
+      var moved = 0;
+      names.forEach(function (name) {
+        var from = RENAMED[name];
+        var to = KEYS[name];
+        if (!from || !to) return;
+        var old = storage.get(from, '');
+        if (empty(old)) return;
+
+        // новый ключ уже заполнен — значит миграция прошла раньше
+        if (!empty(storage.get(to, ''))) {
+          drop(from);
+          return;
+        }
+        storage.set(to, old);
+        drop(from);
+        moved++;
+      });
+      return moved;
+    }
+
+    /**
+     * Удалить старые ключи, которые начинаются с префикса.
+     *
+     * Нужно для `manager_on_<файл>`: таких ключей столько же, сколько плагинов,
+     * и переносить их незачем — менеджер всё равно приводит переключатели к факту
+     * при каждой отрисовке. Но оставлять мусор в хранилище тоже не дело.
+     *
+     * @param {Function} list - () => string[], имена всех ключей хранилища
+     * @param {Function} drop - (name) => void
+     * @param {string} name - имя поля KEYS, чей прежний префикс подчищаем
+     * @returns {number} сколько ключей удалено
+     */
+    function sweep(list, drop, name) {
+      var prefix = RENAMED[name];
+      if (!prefix) return 0;
+      var dropped = 0;
+      list().forEach(function (key) {
+        if (key.indexOf(prefix) !== 0) return;
+        drop(key);
+        dropped++;
+      });
+      return dropped;
+    }
+
+    /** Удаление ключа из настоящего localStorage */
+    function dropper() {
+      return function (name) {
+        try {
+          window.localStorage.removeItem(name);
+        } catch (_unused) {}
+      };
+    }
+
+    /** Имена всех ключей настоящего localStorage */
+    function lister() {
+      return function () {
+        try {
+          return Object.keys(window.localStorage);
+        } catch (_unused2) {
+          return [];
+        }
+      };
+    }
+    var keys = {
+      KEYS: KEYS,
+      RENAMED: RENAMED,
+      migrate: migrate,
+      sweep: sweep,
+      dropper: dropper,
+      lister: lister
+    };
+
+    /**
      * Менеджер плагинов.
      *
      * Смысл: на телевизоре длинные адреса набирать пультом невыносимо. Этот плагин
@@ -35,6 +186,15 @@
     function startPlugin() {
       if (window.plugin_manager_ready) return;
       window.plugin_manager_ready = true;
+      try {
+        keys.migrate(Lampa.Storage, keys.dropper(), ['seen', 'source', 'local_host']);
+
+        // Переключатели не переносим, а выбрасываем: их значение всё равно
+        // приводится к факту при каждой отрисовке настроек.
+        keys.sweep(keys.lister(), keys.dropper(), 'plugin_on');
+      } catch (err) {
+        console.error('Manager', 'migrate error:', err);
+      }
       Lampa.SettingsApi.addComponent({
         component: COMPONENT,
         icon: ICON,
@@ -79,7 +239,7 @@
      * исчезнувший. Пультом это мучительно, а знаний, что плагин переименовали,
      * у человека вообще нет.
      *
-     * Ключ `manager_seen` помнит, какие плагины менеджер уже предлагал. Без него
+     * Ключ `cc_manager_seen` помнит, какие плагины менеджер уже предлагал. Без него
      * пришлось бы выбирать между «новые плагины не появляются» и «выключенные
      * возвращаются при каждом запуске».
      */
@@ -121,7 +281,7 @@
         Lampa.Plugins.remove(plugin);
         forget(file);
       });
-      Lampa.Storage.set('manager_seen', seen);
+      Lampa.Storage.set(keys.KEYS.seen, seen);
       if (added.length) {
         Lampa.Noty.show(Lampa.Lang.translate('manager_installed') + ': ' + added.join(', '));
       }
@@ -135,7 +295,7 @@
      * считаем уже предложенным всё, что стоит сейчас.
      */
     function known() {
-      var seen = Lampa.Storage.get('manager_seen', '');
+      var seen = Lampa.Storage.get(keys.KEYS.seen, '');
       if (Array.isArray(seen)) return seen;
       return Lampa.Plugins.get().map(function (plugin) {
         return ourFile(plugin.url);
@@ -172,7 +332,7 @@
      * ничего не сделала.
      */
     function forget(file) {
-      Lampa.Storage.set('manager_on_' + file, false);
+      Lampa.Storage.set(keys.KEYS.plugin_on + file, false);
     }
     function toArray(value) {
       if (!value) return [];
@@ -221,7 +381,7 @@
       Lampa.SettingsApi.addParam({
         component: COMPONENT,
         param: {
-          name: 'manager_source',
+          name: keys.KEYS.source,
           type: 'select',
           values: {
             github: 'GitHub',
@@ -248,7 +408,7 @@
       Lampa.SettingsApi.addParam({
         component: COMPONENT,
         param: {
-          name: 'manager_local_host',
+          name: keys.KEYS.local_host,
           type: 'input',
           values: '',
           placeholder: '192.168.1.10:3000',
@@ -279,7 +439,7 @@
         }
       });
       list.filter(available).forEach(function (item) {
-        var name = 'manager_on_' + item.file;
+        var name = keys.KEYS.plugin_on + item.file;
 
         // Переключатель обязан показывать факт, а не то, что осталось в памяти
         // с прошлого запуска: плагин могли удалить или добавить мимо менеджера.
@@ -333,13 +493,13 @@
 
     /** Откуда грузить плагины */
     function base() {
-      if (Lampa.Storage.field('manager_source') !== 'local') return REPO;
+      if (Lampa.Storage.field(keys.KEYS.source) !== 'local') return REPO;
       return localBase() || REPO;
     }
 
     /** Машина разработчика, если её адрес задан */
     function localBase() {
-      var host = (Lampa.Storage.get('manager_local_host', '') + '').trim();
+      var host = (Lampa.Storage.get(keys.KEYS.local_host, '') + '').trim();
       if (!host) return '';
       if (!/^https?:\/\//.test(host)) host = 'http://' + host;
       return host.replace(/\/+$/, '') + '/plugins/';
