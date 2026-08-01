@@ -560,17 +560,17 @@
       // На webOS событий tracks и subs не бывает вовсе: плеер обнуляет список
       // и уходит в нативную ветку ([video.js:649](src/interaction/player/video.js:649)),
       // а дорожки приезжают отдельными событиями и попадают сразу в панель.
-      // Без этой подписки на телевизоре плагин молчал бы, ничего не восстанавливая.
+      // Без этих подписок на телевизоре плагин молчал бы, ничего не восстанавливая.
       Lampa.PlayerVideo.listener.follow('webos_tracks', function (e) {
         try {
-          onTracks(e.tracks);
+          onWebosTracks(e.tracks);
         } catch (err) {
           console.error('Memory', 'webos tracks error:', err);
         }
       });
       Lampa.PlayerVideo.listener.follow('webos_subs', function (e) {
         try {
-          onSubs(e.subs);
+          onWebosSubs(e.subs);
         } catch (err) {
           console.error('Memory', 'webos subs error:', err);
         }
@@ -640,19 +640,7 @@
       var rec = current.card && memory.get(current.card);
       if (!rec || rec.s === undefined) return;
       applySubs(subs, rec);
-
-      // Второй заход — из-за порядка на webOS. Список субтитров приезжает раньше,
-      // чем плеер применяет штатную настройку «включать субтитры сразу»
-      // ([video.js:653](src/interaction/player/video.js:653)), и она перебивает
-      // наш выбор: проверено на телевизоре — субтитры включались, хотя человек
-      // их выключил. Повтор кладёт предпочтение последним.
-      setTimeout(function () {
-        return applySubs(subs, rec);
-      }, SETTLE);
     }
-
-    /** Сколько ждём, пока плеер закончит со своими умолчаниями */
-    var SETTLE = 1500;
     function applySubs(subs, rec) {
       // Выключено. Проверять текущее состояние нельзя: в этот момент плеер ещё
       // не показал своё, а через мгновение покажет.
@@ -668,6 +656,62 @@
       if (!wanted || wanted === match$1.selectedSub(subs)) return;
       match$1.applySub(subs, wanted);
       Lampa.PlayerVideo.subsview(true);
+    }
+
+    /* ------------------------------------------------------------------ webOS */
+
+    /**
+     * На телевизоре выбор не применяется руками, а кладётся в `params` плеера.
+     *
+     * У Lampa для этого есть свой механизм: `saveParams` запоминает выбранные
+     * дорожку и субтитры, а `webosLoadTracks`/`webosLoadSubs` применяют их при
+     * следующем запуске — и только если там пусто, включают субтитры по штатной
+     * настройке ([video.js:189](src/interaction/player/video.js:189)).
+     *
+     * Мы просто заполняем `params` до того, как плеер до него дойдёт: списки
+     * приезжают отдельными событиями раньше, чем плеер их применяет. Так выбор
+     * ставит сам плеер, одним движением — без гонки и без двух галочек разом,
+     * которые получались, когда две стороны правили список независимо.
+     */
+    function params() {
+      return Lampa.PlayerVideo.saveParams();
+    }
+    function onWebosTracks(tracks) {
+      if (!current) current = {
+        card: cardOf(null),
+        tracks: null,
+        subs: null
+      };
+      current.tracks = tracks;
+      if (!tracks || tracks.length < 2) return;
+      var rec = current.card && memory.get(current.card);
+      if (!rec || !rec.a) return;
+      var wanted = match$1.match(tracks, {
+        lang: rec.a.l || '',
+        label: rec.a.n || ''
+      });
+      if (!wanted) return;
+
+      // здесь ждут порядковый номер в списке
+      params().track = tracks.indexOf(wanted);
+    }
+    function onWebosSubs(subs) {
+      if (!current) current = {
+        card: cardOf(null),
+        tracks: null,
+        subs: null
+      };
+      current.subs = subs;
+      if (!subs || !subs.length) return;
+      var rec = current.card && memory.get(current.card);
+      if (!rec || rec.s === undefined) return;
+      var wanted = rec.s ? match$1.matchSub(subs, {
+        lang: rec.s.l || '',
+        label: rec.s.n || ''
+      }) : null;
+
+      // а здесь — поле index, где -1 означает «Отключено»
+      params().sub = wanted ? wanted.index : -1;
     }
     function rememberSubs() {
       if (!current || !current.card || !current.subs) return;
