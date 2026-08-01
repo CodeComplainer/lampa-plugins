@@ -601,8 +601,10 @@
         label: rec.a.n || ''
       });
       if (!wanted || wanted === match$1.selected(tracks)) return;
+
+      // Молча: плагин восстанавливает то, что человек сам и выбрал в прошлый раз,
+      // сообщать тут не о чем — а всплывающая плашка в начале каждой серии мешает.
       match$1.apply(tracks, wanted);
-      Lampa.Noty.show(Lampa.Lang.translate('memory_track') + ': ' + trackName(wanted));
     }
 
     /**
@@ -637,10 +639,24 @@
       current.subs = subs;
       var rec = current.card && memory.get(current.card);
       if (!rec || rec.s === undefined) return;
+      applySubs(subs, rec);
 
-      // сохранено «выключено»
+      // Второй заход — из-за порядка на webOS. Список субтитров приезжает раньше,
+      // чем плеер применяет штатную настройку «включать субтитры сразу»
+      // ([video.js:653](src/interaction/player/video.js:653)), и она перебивает
+      // наш выбор: проверено на телевизоре — субтитры включались, хотя человек
+      // их выключил. Повтор кладёт предпочтение последним.
+      setTimeout(function () {
+        return applySubs(subs, rec);
+      }, SETTLE);
+    }
+
+    /** Сколько ждём, пока плеер закончит со своими умолчаниями */
+    var SETTLE = 1500;
+    function applySubs(subs, rec) {
+      // Выключено. Проверять текущее состояние нельзя: в этот момент плеер ещё
+      // не показал своё, а через мгновение покажет.
       if (!rec.s) {
-        if (!match$1.selectedSub(subs)) return;
         match$1.applySub(subs, null);
         Lampa.PlayerVideo.subsview(false);
         return;
@@ -652,7 +668,6 @@
       if (!wanted || wanted === match$1.selectedSub(subs)) return;
       match$1.applySub(subs, wanted);
       Lampa.PlayerVideo.subsview(true);
-      Lampa.Noty.show(Lampa.Lang.translate('memory_subs') + ': ' + trackName(wanted));
     }
     function rememberSubs() {
       if (!current || !current.card || !current.subs) return;
@@ -720,24 +735,9 @@
       return active.movie || active.card || null;
     }
 
-    /** Название дорожки в том же виде, в каком его показывает панель плеера */
-    function trackName(track) {
-      var about = match$1.describe(track);
-      if (!about) return Lampa.Lang.translate('player_unknown');
-      return [about.label, about.lang].filter(Boolean).join(' / ');
-    }
-    Lampa.Lang.add({
-      memory_track: {
-        ru: 'Дорожка',
-        en: 'Audio track',
-        uk: 'Доріжка'
-      },
-      memory_subs: {
-        ru: 'Субтитры',
-        en: 'Subtitles',
-        uk: 'Субтитри'
-      }
-    });
+    // Плагин работает молча и своих строк не имеет: он лишь возвращает то,
+    // что человек выбрал сам, и рассказывать об этом каждую серию незачем.
+
     if (window.appready) startPlugin();else {
       Lampa.Listener.follow('app', function (e) {
         if (e.type === 'ready') startPlugin();
