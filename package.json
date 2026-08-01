@@ -3,9 +3,9 @@
     "private": true,
     "type": "module",
     "scripts": {
-        "lint": "biome check ../lampa-source/plugins/shared ../lampa-source/plugins/continue ../lampa-source/plugins/manager ../lampa-source/plugins/memory ../lampa-source/plugins/devtools",
-        "format": "biome check --write ../lampa-source/plugins/shared ../lampa-source/plugins/continue ../lampa-source/plugins/manager ../lampa-source/plugins/memory ../lampa-source/plugins/devtools",
-        "test": "cd ../lampa-source && npx vitest run plugins/shared plugins/continue plugins/memory",
+        "lint": "biome check ../lampa-source/plugins/shared ../lampa-source/plugins/subpeek ../lampa-source/plugins/continue ../lampa-source/plugins/manager ../lampa-source/plugins/memory ../lampa-source/plugins/devtools",
+        "format": "biome check --write ../lampa-source/plugins/shared ../lampa-source/plugins/subpeek ../lampa-source/plugins/continue ../lampa-source/plugins/manager ../lampa-source/plugins/memory ../lampa-source/plugins/devtools",
+        "test": "cd ../lampa-source && npx vitest run plugins/shared plugins/subpeek plugins/continue plugins/memory",
         "index:events": "node tools/index-events.mjs"
     },
     "devDependencies": {
