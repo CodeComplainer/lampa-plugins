@@ -88,6 +88,7 @@
         // установка без спроса.
         var inherited = false;
         toArray(item.replaces).forEach(function (old) {
+          forget(old);
           var exist = installed(old);
           if (!exist) return;
           Lampa.Plugins.remove(exist);
@@ -110,6 +111,7 @@
           return item.file === file;
         })) return;
         Lampa.Plugins.remove(plugin);
+        forget(file);
       });
       Lampa.Storage.set('manager_seen', seen);
       if (added.length) {
@@ -148,6 +150,18 @@
      */
     function available(item) {
       return !item.local || Lampa.Storage.field('manager_source') === 'local';
+    }
+
+    /**
+     * Сбросить переключатель исчезнувшего плагина: иначе, вернись он когда-нибудь
+     * под тем же именем, переключатель показал бы «включен» от прошлой жизни.
+     *
+     * Именно сбросить, а не удалить ключ: `Storage.remove` — это про снятие
+     * значения с синхронизации, а не про localStorage, и здесь бы просто
+     * ничего не сделала.
+     */
+    function forget(file) {
+      Lampa.Storage.set('manager_on_' + file, false);
     }
     function toArray(value) {
       if (!value) return [];
