@@ -49,6 +49,271 @@
     };
 
     /**
+     * Сопоставление аудиодорожек между раздачами.
+     *
+     * Индекс дорожки для этого не годится: в одной раздаче русская дорожка первая,
+     * в другой третья. Поэтому запоминаем язык и название озвучки, а при следующем
+     * запуске ищем максимально близкую.
+     */
+
+    /**
+     * Приметы дорожки, по которым её можно узнать в другой раздаче.
+     *
+     * @param {Object} track - дорожка плеера
+     * @returns {{lang: string, label: string}|null}
+     */
+    function describe$1(track) {
+      if (!track) return null;
+      var lang = language(track.language || track.lang || '');
+      var label = clean$1(track.label || track.name || '');
+      if (!lang && !label) return null;
+      return {
+        lang: lang,
+        label: label
+      };
+    }
+
+    /**
+     * Код языка приходит в разном виде: в браузере двухбуквенный (`ru`),
+     * на webOS трёхбуквенный (`rus`). Без приведения запись, сделанная на одном
+     * устройстве, не совпала бы с дорожками на другом.
+     */
+    var LANGS = {
+      rus: 'ru',
+      ukr: 'uk',
+      eng: 'en',
+      kor: 'ko',
+      jpn: 'ja',
+      chi: 'zh',
+      zho: 'zh',
+      ger: 'de',
+      deu: 'de',
+      fre: 'fr',
+      fra: 'fr',
+      spa: 'es',
+      ita: 'it',
+      pol: 'pl',
+      tur: 'tr'
+    };
+    function language(value) {
+      var lang = clean$1(value);
+      return LANGS[lang] || lang;
+    }
+
+    /**
+     * Найти дорожку, наиболее похожую на запомненную.
+     *
+     * Совпадение по названию озвучки важнее языка: «Дубляж» и «LostFilm» — обе
+     * русские, но человек выбирал конкретную.
+     *
+     * @param {Array} tracks - дорожки текущего файла
+     * @param {Object} saved - результат describe() с прошлого раза
+     * @returns {Object|null}
+     */
+    function match(tracks, saved) {
+      var list = (tracks || []).filter(Boolean);
+      if (!list.length || !saved) return null;
+      var described = list.map(function (track) {
+        return {
+          track: track,
+          about: describe$1(track)
+        };
+      });
+      var best = null;
+      var best_score = 0;
+      described.forEach(function (item) {
+        var score = compare(item.about, saved);
+        if (score > best_score) {
+          best_score = score;
+          best = item.track;
+        }
+      });
+      return best;
+    }
+
+    /**
+     * Насколько дорожка похожа на запомненную. Ноль означает «не подходит»:
+     * лучше оставить выбор плеера, чем включить заведомо чужую озвучку.
+     */
+    function compare(about, saved) {
+      if (!about) return 0;
+      var same_lang = !!about.lang && about.lang === saved.lang;
+      var same_label = !!about.label && about.label === saved.label;
+      if (same_label && same_lang) return 4;
+      if (same_label) return 3;
+
+      // название могло записаться иначе, но одна строка входит в другую
+      if (about.label && saved.label && (about.label.includes(saved.label) || saved.label.includes(about.label))) {
+        return same_lang ? 3 : 2;
+      }
+
+      // язык тот же, а озвучку в прошлый раз не удалось опознать
+      if (same_lang && !saved.label) return 2;
+      if (same_lang) return 1;
+      return 0;
+    }
+
+    /** Выбранная сейчас дорожка */
+    function selected(tracks) {
+      var list = (tracks || []).filter(Boolean);
+      return list.find(function (track) {
+        return track.selected;
+      }) || list.find(function (track) {
+        return track.enabled;
+      }) || null;
+    }
+
+    /**
+     * Переключение — та же последовательность, что делает штатная панель плеера:
+     * снять признаки со всех, поставить выбранной и позвать её onSelect.
+     */
+    function apply(tracks, track) {
+      if (!track) return false;
+      var list = (tracks || []).filter(Boolean);
+      list.forEach(function (item) {
+        item.enabled = false;
+        item.selected = false;
+      });
+      track.enabled = true;
+      track.selected = true;
+      if (typeof track.onSelect === 'function') track.onSelect(track);
+      return true;
+    }
+
+    /* -------------------------------------------------------------- субтитры */
+
+    /**
+     * Дорожки субтитров живут по своим правилам: включённость обозначается полем
+     * `mode`, а в списке может лежать псевдострока «Отключено» с индексом -1,
+     * которую панель добавляет при первом открытии.
+     */
+    function realSubs(subs) {
+      return (subs || []).filter(function (item) {
+        return item && item.index !== -1;
+      });
+    }
+
+    /**
+     * Что выбрано сейчас. `null` — субтитры выключены, и это полноценный ответ:
+     * человек мог отключить их намеренно.
+     */
+    function selectedSub(subs) {
+      return realSubs(subs).find(function (item) {
+        return item.selected || item.mode === 'showing';
+      }) || null;
+    }
+
+    /**
+     * Переключение повторяет последовательность штатной панели плеера
+     * ([panel.js:427](src/interaction/player/panel.js:427)): снять режим со всех,
+     * поставить выбранной и позвать её onSelect.
+     *
+     * Видимость переключает вызывающий: за неё отвечает Video.subsview.
+     *
+     * Выключение — отдельный случай. На webOS `mode` это не поле, а сеттер, и
+     * реагирует он только на `showing` ([webos.js:76](src/interaction/player/webos.js:76)),
+     * поэтому «выключить всё» там не выключает ничего. Выключением служит
+     * псевдострока «Отключено» с индексом -1: её и выбираем.
+     */
+    function applySub(subs, track) {
+      var list = subs || [];
+      var target = track || list.find(function (item) {
+        return item && item.index === -1;
+      }) || null;
+      list.forEach(function (item) {
+        item.selected = false;
+        if (item !== target) item.mode = 'disabled';
+      });
+      if (!target) return false;
+      target.mode = 'showing';
+      target.selected = true;
+      if (typeof target.onSelect === 'function') target.onSelect(target);
+      return !!track;
+    }
+    function matchSub(subs, saved) {
+      return match(realSubs(subs), saved);
+    }
+    function clean$1(value) {
+      return ((value || '') + '').toLowerCase().trim();
+    }
+    var match$1 = {
+      describe: describe$1,
+      match: match,
+      compare: compare,
+      selected: selected,
+      apply: apply,
+      selectedSub: selectedSub,
+      applySub: applySub,
+      matchSub: matchSub,
+      realSubs: realSubs
+    };
+
+    /**
+     * Заметить, что выбор дорожки или субтитров сменился.
+     *
+     * Ждать закрытия плеера нельзя: события `destroy` не будет, если телевизор
+     * выключили кнопкой, приложение сняли или устройство ушло в сон, — и выбор,
+     * сделанный за весь вечер, пропадал.
+     *
+     * **Объекты плеера при этом не трогаем.** Была попытка подменять у них
+     * `onSelect` — панель зовёт его после выбора, и поле выглядит как оставленная
+     * для плагинов зацепка. На телевизоре это дважды подвесило список дорожек:
+     * он схлопывался, а фокус оставался на нём, и из плеера было не выйти.
+     * Причину поймать не удалось, но менять чужие структуры ради удобства —
+     * плохой размен: цена ошибки тут не «фича не сработала», а «телевизор завис».
+     *
+     * Поэтому наблюдаем со стороны: раз в несколько секунд смотрим, что выбрано,
+     * и реагируем только на смену. Заодно ловится и выбор, сделанный самим плеером,
+     * — через `onSelect` он не проходил вовсе.
+     */
+
+    function create$1() {
+      /** Приметы того, что было выбрано в прошлый раз */
+      var last = '';
+
+      /** Первое наблюдение уже было */
+      var primed = false;
+      return {
+        /**
+         * @param {Object|null} about - результат describe() по выбранному
+         * @returns {Object|null} то же самое, если выбор сменился, иначе null
+         */
+        check: function check(about) {
+          var sign = about ? (about.lang || '') + '|' + (about.label || '') : '';
+
+          // Первое наблюдение — точка отсчёта, а не решение. Дорожку в начале
+          // файла ставит плеер, и засчитывать её как выбор человека нельзя:
+          // рейтинг студий раздувался бы просто от того, что кино включили.
+          if (!primed) {
+            primed = true;
+            last = sign;
+            return null;
+          }
+
+          // Пустой выбор — тоже не решение: на webOS плеер не помечает
+          // дорожку, которую поставил сам, и отличить «ничего не выбрано»
+          // от «выбрали и не сказали» невозможно.
+          if (!sign || sign === last) return null;
+          last = sign;
+          return about;
+        },
+        /** Новый файл: прошлый выбор к нему отношения не имеет */reset: function reset() {
+          last = '';
+          primed = false;
+        },
+        state: function state() {
+          return {
+            last: last,
+            primed: primed
+          };
+        }
+      };
+    }
+    var watch = {
+      create: create$1
+    };
+
+    /**
      * Память по тайтлу: как этот сериал или фильм смотрели в прошлый раз.
      *
      * Одна запись на карточку вместо разрозненных ключей — название для поиска,
@@ -1177,6 +1442,75 @@
     };
 
     /**
+     * Какую озвучку предпочитать при выборе раздачи.
+     *
+     * У человека одно решение — как он хочет это слушать, — но следов от него два,
+     * и они разной силы:
+     *
+     * - `a` — дорожка, которую выбрали в плеере руками. Прямое решение;
+     * - `v` — студия из заголовка раздачи, которую однажды запустили. Слабое
+     *   свидетельство: раздачу выбрали потому, что она была лучшей по сидерам
+     *   и качеству, а не потому, что хотели именно эту студию.
+     *
+     * Поэтому `a` побеждает `v`. Раньше их никто не сравнивал, и continue продолжал
+     * тащить русские раздачи человеку, который явно переключился на английскую
+     * дорожку.
+     */
+
+    /**
+     * Язык поиска задан явно.
+     *
+     * Штатное значение по умолчанию — `df`, «оригинальный»
+     * ([params.js](src/interaction/settings/params.js)): язык не выбран вовсе.
+     * Оно тоже из двух букв, поэтому отличать его приходится по имени — иначе
+     * сравнение с языком дорожки не совпадает никогда, и предпочтение студии
+     * снимается у всех, кто настройку не трогал. Ровно так и было.
+     */
+    function searchLang(parse_lang) {
+      var lang = (parse_lang || '') + '';
+      return lang && lang !== 'df' ? lang : '';
+    }
+
+    /**
+     * @param {Object} rec - запись памяти по карточке
+     * @param {string} [parse_lang] - язык, на котором ищут раздачи
+     * @returns {string|null} название студии либо null, если предпочтения нет
+     */
+    function prefer(rec, parse_lang) {
+      if (!rec) return null;
+      var audio = rec.a;
+      if (!audio) return rec.v || null;
+      var lang = searchLang(parse_lang);
+
+      // Слушают не на языке поиска — значит в оригинале. Студия тут ни при чём:
+      // оригинальная дорожка есть почти в любой раздаче, и держаться за прежнюю
+      // студию значило бы спорить с человеком. Предпочтение снимается, а не
+      // выворачивается наизнанку.
+      if (audio.l && lang && audio.l !== lang) return null;
+      return studio(audio.n) || rec.v || null;
+    }
+
+    /**
+     * Студия по названию аудиодорожки.
+     *
+     * Словарь тот же, что и для заголовков раздач: студии подписывают дорожки теми
+     * же именами, которыми метят раздачи, — «HDRezka Studio», «ColdFilm». Названия
+     * вроде «English» или «Dub» не опознаются, и это правильно: студии там нет.
+     *
+     * @param {string} label - название дорожки
+     * @returns {string|null}
+     */
+    function studio(label) {
+      if (!label) return null;
+      var found = detectVoices(label + '');
+      return found.length ? found[0] : null;
+    }
+    var voice = {
+      prefer: prefer,
+      studio: studio
+    };
+
+    /**
      * «Продолжить» — кнопка на карточке, запускающая нужную серию из торрента
      * без ручного выбора раздачи и файла.
      *
@@ -1205,9 +1539,20 @@
      * Недоступность видна без наведения — по приглушённой иконке.
      */
     var BUTTON_STYLE = "<style id=\"continue-style\">\n    .full-start-new__buttons .full-start__button span.button--continue__hint{\n        display: none;\n        margin-left: .7em;\n        font-size: 1.1em;\n        white-space: nowrap;\n    }\n    .full-start-new__buttons .full-start__button.button--continue.focus span.button--continue__hint,\n    .full-start-new__buttons .full-start__button.button--continue.hover span.button--continue__hint{\n        display: inline-block !important;\n    }\n    .full-start-new__buttons .full-start__button.button--continue.has--hint.focus span:not(.button--continue__hint),\n    .full-start-new__buttons .full-start__button.button--continue.has--hint.hover span:not(.button--continue__hint){\n        display: none !important;\n    }\n    .full-start-new__buttons .full-start__button.button--continue.is--unavailable svg{\n        opacity: .35;\n    }\n    .full-start-new__buttons .full-start__button.button--continue.is--unavailable.focus svg{\n        opacity: .55;\n    }\n</style>";
+
+    /**
+     * Вес свидетельства в рейтинге студий.
+     *
+     * Запуск раздачи — слабое свидетельство: её выбрали за сидеров и качество,
+     * а студия оказалась какой была. Выбор дорожки в плеере — прямое решение,
+     * и весит больше. Иначе привычка учится по случайностям.
+     */
+    var LAUNCH_WEIGHT = 1;
+    var PICK_WEIGHT = 3;
     function startPlugin() {
       if (window.plugin_continue_ready) return;
       window.plugin_continue_ready = true;
+      followTracks();
       memory = store.create(Lampa.Storage);
       if (!document.getElementById('continue-style')) $('body').append(BUTTON_STYLE);
       Lampa.Listener.follow('full', function (e) {
@@ -1541,7 +1886,7 @@
       var rec = memory.get(card);
       if (!rec) return null;
       return {
-        voice: rec.v || null,
+        voice: voice.prefer(rec, Lampa.Storage.field('parse_lang')),
         resolution: rec.r || null
       };
     }
@@ -1589,10 +1934,57 @@
      * не задано, но привычная студия обычно та же, что и в остальных.
      */
     function countVoice(cand) {
-      var voice = cand.parsed.voices[0];
-      if (!voice) return;
+      bumpVoice(cand.parsed.voices[0], LAUNCH_WEIGHT);
+    }
+
+    /**
+     * Рейтинг учится и на выборе дорожки в плеере, а не только на запусках.
+     *
+     * Плагин работает и без memory, поэтому смотрит сам: memory запоминает дорожку
+     * по тайтлу, а нам нужна привычка по всем тайтлам сразу.
+     *
+     * Наблюдаем со стороны, на том же `timeupdate`, на котором Lampa обновляет
+     * позицию просмотра. Объекты плеера не трогаем — подмена `onSelect` дважды
+     * подвесила список дорожек на телевизоре, см. `shared/watch.js`.
+     */
+    var WATCH_EVERY = 3000;
+    var tracks_now = null;
+    var seen = watch.create();
+    var looked = 0;
+    function followTracks() {
+      var remember = function remember(e) {
+        tracks_now = e.tracks;
+        seen.reset();
+      };
+      Lampa.PlayerVideo.listener.follow('tracks', remember);
+
+      // на телевизоре списки приезжают своим событием
+      Lampa.PlayerVideo.listener.follow('webos_tracks', remember);
+      Lampa.PlayerVideo.listener.follow('timeupdate', function () {
+        try {
+          lookAtTracks();
+        } catch (err) {
+          console.error('Continue', 'voice watch error:', err);
+        }
+      });
+    }
+    function lookAtTracks() {
+      if (!tracks_now || tracks_now.length < 2) return;
+      var now = Date.now();
+      if (now - looked < WATCH_EVERY) return;
+      looked = now;
+      var about = seen.check(match$1.describe(match$1.selected(tracks_now)));
+      if (about) bumpVoice(voice.studio(about.label), PICK_WEIGHT);
+    }
+
+    /**
+     * @param {string} name - студия
+     * @param {number} weight - насколько это весомое свидетельство
+     */
+    function bumpVoice(name, weight) {
+      if (!name) return;
       var rating = Lampa.Storage.get(keys.KEYS.voices, '{}') || {};
-      rating[voice] = (rating[voice] || 0) + 1;
+      rating[name] = (rating[name] || 0) + weight;
       var names = Object.keys(rating);
 
       // Затухание: свежие предпочтения должны весить больше давних, иначе

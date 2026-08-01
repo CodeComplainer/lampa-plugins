@@ -249,6 +249,71 @@
     };
 
     /**
+     * Заметить, что выбор дорожки или субтитров сменился.
+     *
+     * Ждать закрытия плеера нельзя: события `destroy` не будет, если телевизор
+     * выключили кнопкой, приложение сняли или устройство ушло в сон, — и выбор,
+     * сделанный за весь вечер, пропадал.
+     *
+     * **Объекты плеера при этом не трогаем.** Была попытка подменять у них
+     * `onSelect` — панель зовёт его после выбора, и поле выглядит как оставленная
+     * для плагинов зацепка. На телевизоре это дважды подвесило список дорожек:
+     * он схлопывался, а фокус оставался на нём, и из плеера было не выйти.
+     * Причину поймать не удалось, но менять чужие структуры ради удобства —
+     * плохой размен: цена ошибки тут не «фича не сработала», а «телевизор завис».
+     *
+     * Поэтому наблюдаем со стороны: раз в несколько секунд смотрим, что выбрано,
+     * и реагируем только на смену. Заодно ловится и выбор, сделанный самим плеером,
+     * — через `onSelect` он не проходил вовсе.
+     */
+
+    function create$1() {
+      /** Приметы того, что было выбрано в прошлый раз */
+      var last = '';
+
+      /** Первое наблюдение уже было */
+      var primed = false;
+      return {
+        /**
+         * @param {Object|null} about - результат describe() по выбранному
+         * @returns {Object|null} то же самое, если выбор сменился, иначе null
+         */
+        check: function check(about) {
+          var sign = about ? (about.lang || '') + '|' + (about.label || '') : '';
+
+          // Первое наблюдение — точка отсчёта, а не решение. Дорожку в начале
+          // файла ставит плеер, и засчитывать её как выбор человека нельзя:
+          // рейтинг студий раздувался бы просто от того, что кино включили.
+          if (!primed) {
+            primed = true;
+            last = sign;
+            return null;
+          }
+
+          // Пустой выбор — тоже не решение: на webOS плеер не помечает
+          // дорожку, которую поставил сам, и отличить «ничего не выбрано»
+          // от «выбрали и не сказали» невозможно.
+          if (!sign || sign === last) return null;
+          last = sign;
+          return about;
+        },
+        /** Новый файл: прошлый выбор к нему отношения не имеет */reset: function reset() {
+          last = '';
+          primed = false;
+        },
+        state: function state() {
+          return {
+            last: last,
+            primed: primed
+          };
+        }
+      };
+    }
+    var watch = {
+      create: create$1
+    };
+
+    /**
      * Память по тайтлу: как этот сериал или фильм смотрели в прошлый раз.
      *
      * Одна запись на карточку вместо разрозненных ключей — название для поиска,
@@ -542,6 +607,7 @@
           tracks: null,
           subs: null
         };
+        seen.reset();
       });
 
       // Списки дорожек известны только после открытия файла, поэтому переключаем
@@ -580,6 +646,23 @@
           console.error('Memory', 'webos subs error:', err);
         }
       });
+      Lampa.PlayerVideo.listener.follow('timeupdate', function () {
+        try {
+          lookAtTracks();
+        } catch (err) {
+          console.error('Memory', 'track watch error:', err);
+        }
+      });
+
+      // Субтитры панель объявляет сама, отдельной зацепки не нужно. Событие
+      // приходит уже после того, как выставлен `selected` ([panel.js:436]).
+      Lampa.PlayerPanel.listener.follow('subsview', function () {
+        try {
+          rememberSubs();
+        } catch (err) {
+          console.error('Memory', 'subs save error:', err);
+        }
+      });
       Lampa.Player.listener.follow('destroy', function () {
         try {
           rememberTrack();
@@ -589,6 +672,26 @@
         }
         current = null;
       });
+    }
+
+    /**
+     * Записать выбор дорожки сразу, а не только на закрытии плеера.
+     *
+     * Едем на том же событии, на котором Lampa обновляет позицию просмотра
+     * ([player.js:137](src/interaction/player.js:137)): `timeupdate` приходит
+     * примерно раз в секунду. Своего таймера заводить незачем — этот уже тикает
+     * ровно тогда, когда идёт воспроизведение, и замолкает на паузе.
+     */
+    var WATCH_EVERY = 3000;
+    var seen = watch.create();
+    var looked = 0;
+    function lookAtTracks() {
+      if (!current || !current.tracks || current.tracks.length < 2) return;
+      var now = Date.now();
+      if (now - looked < WATCH_EVERY) return;
+      looked = now;
+      if (!seen.check(match$1.describe(match$1.selected(current.tracks)))) return;
+      rememberTrack();
     }
     function onTracks(tracks) {
       if (!current) current = {
