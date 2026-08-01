@@ -21,6 +21,14 @@
     var KEYS = {
       /** Память по тайтлу, общая: memory пишет, continue и subpeek читают */
       watch: 'cc_watch_memory',
+      /**
+       * Язык субтитров, выбранный последним — на всех тайтлах сразу.
+       *
+       * Нужен там, где по карточке ничего не известно: новый фильм, а человек
+       * субтитры в нём ни разу не открывал. Язык меняют куда реже, чем тайтлы,
+       * поэтому одно значение на всех — не упрощение, а точное описание привычки.
+       */
+      subs_lang: 'cc_watch_subs_lang',
       /** Рейтинг студий озвучки с затуханием */
       voices: 'cc_continue_voices',
       /** Уже проверенные раздачи, чтобы не опрашивать их повторно */
@@ -36,120 +44,8 @@
       /** Префикс переключателя плагина, дальше идёт имя файла */
       plugin_on: 'cc_manager_on_'
     };
-
-    /**
-     * Прежние имена. Появились до того, как схема стала общей, и переносятся
-     * разово — при первом запуске плагина, который этим ключом пользуется.
-     */
-    var RENAMED = {
-      watch: 'watch_memory',
-      voices: 'continue_voices',
-      probe: 'continue_probe',
-      no_cam: 'continue_no_cam',
-      seen: 'manager_seen',
-      source: 'manager_source',
-      local_host: 'manager_local_host',
-      plugin_on: 'manager_on_'
-    };
-
-    /**
-     * Значение отсутствует.
-     *
-     * `Storage.get` для незаданного ключа возвращает пустую строку, а не
-     * `undefined`, и попутно приводит типы: `'false'` станет булевым `false`,
-     * а `'0'` — числом. Поэтому проверять можно только на пустую строку —
-     * иначе законный `false` посчитался бы отсутствующим.
-     */
-    function empty(value) {
-      return value === '' || value === undefined || value === null;
-    }
-
-    /**
-     * Перенести значения из старых ключей в новые.
-     *
-     * Идемпотентно: старый ключ после переноса удаляется, а если новый уже занят —
-     * старый его не затирает. Повторный вызов не находит ничего.
-     *
-     * Удаление идёт через `drop`, а не через `Lampa.Storage.remove`: тот снимает
-     * значение с синхронизации на сервере и localStorage не трогает вовсе
-     * ([storage.js:253](src/core/storage/storage.js:253)).
-     *
-     * @param {Object} storage - Lampa.Storage или его подмена в тестах
-     * @param {Function} drop - (name) => void, удаление ключа из localStorage
-     * @param {string[]} names - какие ключи переносить, имена полей KEYS
-     * @returns {number} сколько значений перенесено
-     */
-    function migrate(storage, drop, names) {
-      var moved = 0;
-      names.forEach(function (name) {
-        var from = RENAMED[name];
-        var to = KEYS[name];
-        if (!from || !to) return;
-        var old = storage.get(from, '');
-        if (empty(old)) return;
-
-        // новый ключ уже заполнен — значит миграция прошла раньше
-        if (!empty(storage.get(to, ''))) {
-          drop(from);
-          return;
-        }
-        storage.set(to, old);
-        drop(from);
-        moved++;
-      });
-      return moved;
-    }
-
-    /**
-     * Удалить старые ключи, которые начинаются с префикса.
-     *
-     * Нужно для `manager_on_<файл>`: таких ключей столько же, сколько плагинов,
-     * и переносить их незачем — менеджер всё равно приводит переключатели к факту
-     * при каждой отрисовке. Но оставлять мусор в хранилище тоже не дело.
-     *
-     * @param {Function} list - () => string[], имена всех ключей хранилища
-     * @param {Function} drop - (name) => void
-     * @param {string} name - имя поля KEYS, чей прежний префикс подчищаем
-     * @returns {number} сколько ключей удалено
-     */
-    function sweep(list, drop, name) {
-      var prefix = RENAMED[name];
-      if (!prefix) return 0;
-      var dropped = 0;
-      list().forEach(function (key) {
-        if (key.indexOf(prefix) !== 0) return;
-        drop(key);
-        dropped++;
-      });
-      return dropped;
-    }
-
-    /** Удаление ключа из настоящего localStorage */
-    function dropper() {
-      return function (name) {
-        try {
-          window.localStorage.removeItem(name);
-        } catch (_unused) {}
-      };
-    }
-
-    /** Имена всех ключей настоящего localStorage */
-    function lister() {
-      return function () {
-        try {
-          return Object.keys(window.localStorage);
-        } catch (_unused2) {
-          return [];
-        }
-      };
-    }
     var keys = {
-      KEYS: KEYS,
-      RENAMED: RENAMED,
-      migrate: migrate,
-      sweep: sweep,
-      dropper: dropper,
-      lister: lister
+      KEYS: KEYS
     };
 
     /**
@@ -186,15 +82,6 @@
     function startPlugin() {
       if (window.plugin_manager_ready) return;
       window.plugin_manager_ready = true;
-      try {
-        keys.migrate(Lampa.Storage, keys.dropper(), ['seen', 'source', 'local_host']);
-
-        // Переключатели не переносим, а выбрасываем: их значение всё равно
-        // приводится к факту при каждой отрисовке настроек.
-        keys.sweep(keys.lister(), keys.dropper(), 'plugin_on');
-      } catch (err) {
-        console.error('Manager', 'migrate error:', err);
-      }
       Lampa.SettingsApi.addComponent({
         component: COMPONENT,
         icon: ICON,

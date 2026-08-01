@@ -2,6 +2,53 @@
     'use strict';
 
     /**
+     * Имена ключей в localStorage — единственное место, где они записаны.
+     *
+     * Пространство у Lampa плоское: ни префиксов, ни namespace, ни разделения по
+     * профилям. В нём живут ~155 ключей ядра и все ключи всех установленных
+     * плагинов сразу. Поэтому наши имена начинаются с `cc_`: `continue` и `manager`
+     * — обычные английские слова, и чужой плагин, взявший их же, молча испортил бы
+     * данные. Заодно всё наше находится и чистится одним грепом.
+     *
+     * Схема: `cc_<плагин>_<что>`, общие для нескольких плагинов данные — `cc_watch_*`.
+     *
+     * Чего в именах быть не должно: подстрок `online_`, `file_view_` и `storage_`.
+     * Штатная «Очистка кэша» стирает ключ, если такая подстрока встречается где
+     * угодно внутри имени, а не только в начале
+     * ([storage.js:288](src/core/storage/storage.js:288)).
+     */
+
+    var KEYS = {
+      /** Память по тайтлу, общая: memory пишет, continue и subpeek читают */
+      watch: 'cc_watch_memory',
+      /**
+       * Язык субтитров, выбранный последним — на всех тайтлах сразу.
+       *
+       * Нужен там, где по карточке ничего не известно: новый фильм, а человек
+       * субтитры в нём ни разу не открывал. Язык меняют куда реже, чем тайтлы,
+       * поэтому одно значение на всех — не упрощение, а точное описание привычки.
+       */
+      subs_lang: 'cc_watch_subs_lang',
+      /** Рейтинг студий озвучки с затуханием */
+      voices: 'cc_continue_voices',
+      /** Уже проверенные раздачи, чтобы не опрашивать их повторно */
+      probe: 'cc_continue_probe',
+      /** Отсекать ли экранки. Скрытый параметр, своего экрана настроек нет */
+      no_cam: 'cc_continue_no_cam',
+      /** Какие плагины менеджер уже предлагал */
+      seen: 'cc_manager_seen',
+      /** Источник плагинов: GitHub или локальный сервер */
+      source: 'cc_manager_source',
+      /** Адрес машины разработчика для локального режима */
+      local_host: 'cc_manager_local_host',
+      /** Префикс переключателя плагина, дальше идёт имя файла */
+      plugin_on: 'cc_manager_on_'
+    };
+    var keys = {
+      KEYS: KEYS
+    };
+
+    /**
      * Сопоставление аудиодорожек между раздачами.
      *
      * Индекс дорожки для этого не годится: в одной раздаче русская дорожка первая,
@@ -17,7 +64,7 @@
      */
     function describe(track) {
       if (!track) return null;
-      var lang = language(track.language || track.lang || '');
+      var lang = language$1(track.language || track.lang || '');
       var label = clean(track.label || track.name || '');
       if (!lang && !label) return null;
       return {
@@ -48,7 +95,7 @@
       pol: 'pl',
       tur: 'tr'
     };
-    function language(value) {
+    function language$1(value) {
       var lang = clean(value);
       return LANGS[lang] || lang;
     }
@@ -202,157 +249,6 @@
     };
 
     /**
-     * Имена ключей в localStorage — единственное место, где они записаны.
-     *
-     * Пространство у Lampa плоское: ни префиксов, ни namespace, ни разделения по
-     * профилям. В нём живут ~155 ключей ядра и все ключи всех установленных
-     * плагинов сразу. Поэтому наши имена начинаются с `cc_`: `continue` и `manager`
-     * — обычные английские слова, и чужой плагин, взявший их же, молча испортил бы
-     * данные. Заодно всё наше находится и чистится одним грепом.
-     *
-     * Схема: `cc_<плагин>_<что>`, общие для нескольких плагинов данные — `cc_watch_*`.
-     *
-     * Чего в именах быть не должно: подстрок `online_`, `file_view_` и `storage_`.
-     * Штатная «Очистка кэша» стирает ключ, если такая подстрока встречается где
-     * угодно внутри имени, а не только в начале
-     * ([storage.js:288](src/core/storage/storage.js:288)).
-     */
-
-    var KEYS = {
-      /** Память по тайтлу, общая: memory пишет, continue и subpeek читают */
-      watch: 'cc_watch_memory',
-      /** Рейтинг студий озвучки с затуханием */
-      voices: 'cc_continue_voices',
-      /** Уже проверенные раздачи, чтобы не опрашивать их повторно */
-      probe: 'cc_continue_probe',
-      /** Отсекать ли экранки. Скрытый параметр, своего экрана настроек нет */
-      no_cam: 'cc_continue_no_cam',
-      /** Какие плагины менеджер уже предлагал */
-      seen: 'cc_manager_seen',
-      /** Источник плагинов: GitHub или локальный сервер */
-      source: 'cc_manager_source',
-      /** Адрес машины разработчика для локального режима */
-      local_host: 'cc_manager_local_host',
-      /** Префикс переключателя плагина, дальше идёт имя файла */
-      plugin_on: 'cc_manager_on_'
-    };
-
-    /**
-     * Прежние имена. Появились до того, как схема стала общей, и переносятся
-     * разово — при первом запуске плагина, который этим ключом пользуется.
-     */
-    var RENAMED = {
-      watch: 'watch_memory',
-      voices: 'continue_voices',
-      probe: 'continue_probe',
-      no_cam: 'continue_no_cam',
-      seen: 'manager_seen',
-      source: 'manager_source',
-      local_host: 'manager_local_host',
-      plugin_on: 'manager_on_'
-    };
-
-    /**
-     * Значение отсутствует.
-     *
-     * `Storage.get` для незаданного ключа возвращает пустую строку, а не
-     * `undefined`, и попутно приводит типы: `'false'` станет булевым `false`,
-     * а `'0'` — числом. Поэтому проверять можно только на пустую строку —
-     * иначе законный `false` посчитался бы отсутствующим.
-     */
-    function empty(value) {
-      return value === '' || value === undefined || value === null;
-    }
-
-    /**
-     * Перенести значения из старых ключей в новые.
-     *
-     * Идемпотентно: старый ключ после переноса удаляется, а если новый уже занят —
-     * старый его не затирает. Повторный вызов не находит ничего.
-     *
-     * Удаление идёт через `drop`, а не через `Lampa.Storage.remove`: тот снимает
-     * значение с синхронизации на сервере и localStorage не трогает вовсе
-     * ([storage.js:253](src/core/storage/storage.js:253)).
-     *
-     * @param {Object} storage - Lampa.Storage или его подмена в тестах
-     * @param {Function} drop - (name) => void, удаление ключа из localStorage
-     * @param {string[]} names - какие ключи переносить, имена полей KEYS
-     * @returns {number} сколько значений перенесено
-     */
-    function migrate(storage, drop, names) {
-      var moved = 0;
-      names.forEach(function (name) {
-        var from = RENAMED[name];
-        var to = KEYS[name];
-        if (!from || !to) return;
-        var old = storage.get(from, '');
-        if (empty(old)) return;
-
-        // новый ключ уже заполнен — значит миграция прошла раньше
-        if (!empty(storage.get(to, ''))) {
-          drop(from);
-          return;
-        }
-        storage.set(to, old);
-        drop(from);
-        moved++;
-      });
-      return moved;
-    }
-
-    /**
-     * Удалить старые ключи, которые начинаются с префикса.
-     *
-     * Нужно для `manager_on_<файл>`: таких ключей столько же, сколько плагинов,
-     * и переносить их незачем — менеджер всё равно приводит переключатели к факту
-     * при каждой отрисовке. Но оставлять мусор в хранилище тоже не дело.
-     *
-     * @param {Function} list - () => string[], имена всех ключей хранилища
-     * @param {Function} drop - (name) => void
-     * @param {string} name - имя поля KEYS, чей прежний префикс подчищаем
-     * @returns {number} сколько ключей удалено
-     */
-    function sweep(list, drop, name) {
-      var prefix = RENAMED[name];
-      if (!prefix) return 0;
-      var dropped = 0;
-      list().forEach(function (key) {
-        if (key.indexOf(prefix) !== 0) return;
-        drop(key);
-        dropped++;
-      });
-      return dropped;
-    }
-
-    /** Удаление ключа из настоящего localStorage */
-    function dropper() {
-      return function (name) {
-        try {
-          window.localStorage.removeItem(name);
-        } catch (_unused) {}
-      };
-    }
-
-    /** Имена всех ключей настоящего localStorage */
-    function lister() {
-      return function () {
-        try {
-          return Object.keys(window.localStorage);
-        } catch (_unused2) {
-          return [];
-        }
-      };
-    }
-    var keys = {
-      KEYS: KEYS,
-      RENAMED: RENAMED,
-      migrate: migrate,
-      sweep: sweep,
-      dropper: dropper,
-      lister: lister
-    };
-
-    /**
      * Память по тайтлу: как этот сериал или фильм смотрели в прошлый раз.
      *
      * Одна запись на карточку вместо разрозненных ключей — название для поиска,
@@ -445,42 +341,6 @@
       }
 
       /**
-       * Перенос из ключей, которыми пользовались отдельные плагины до объединения.
-       *
-       * Разбирается один раз: после переноса старые ключи удаляются, и повторный
-       * вызов уже ничего не находит.
-       *
-       * Внимание на `q` у continue_last — там лежало разрешение, а не название.
-       */
-      function migrate() {
-        var map = all();
-        var moved = 0;
-        var last = storage.cache('continue_last', 150, {});
-        Object.keys(last).forEach(function (key) {
-          var rec = map[key] = map[key] || {};
-          if (last[key].v && !rec.v) rec.v = last[key].v;
-          if (last[key].q && !rec.r) rec.r = last[key].q;
-          if (!rec.t) rec.t = last[key].t || 0;
-          moved++;
-        });
-        var audio = storage.cache('audio_tracks', 200, {});
-        Object.keys(audio).forEach(function (key) {
-          var rec = map[key] = map[key] || {};
-          if (!rec.a && (audio[key].l || audio[key].n)) rec.a = {
-            l: audio[key].l,
-            n: audio[key].n
-          };
-          if (!rec.t) rec.t = audio[key].t || 0;
-          moved++;
-        });
-        if (!moved) return 0;
-        storage.set(KEY, map);
-        storage.set('continue_last', {});
-        storage.set('audio_tracks', {});
-        return moved;
-      }
-
-      /**
        * Продублировать рабочее название в штатный список уточнения.
        *
        * Ключ `user_clarifys` синхронизируется через CUB и читается обычным экраном
@@ -518,7 +378,6 @@
       return {
         get: get,
         set: set,
-        migrate: migrate,
         clarify: clarify,
         lastClarify: lastClarify,
         cardID: cardID,
@@ -542,35 +401,59 @@
      * `Video.rewind`, шаг копится с ускорением, а настоящий seek случается один раз
      * через секунду после отпускания ([video.js:1349](src/interaction/player/video.js:1349)).
      *
-     * Различить их можно только по `keyup`: автоповтор — это второй `keydown`
-     * подряд, между которыми кнопку не отпускали. Считать нажатия бесполезно, три
-     * быстрых тычка дают ровно тот же счёт, что треть секунды удержания.
+     * Различие ровно одно: между двумя соседними перемотками кнопку либо отпускали,
+     * либо нет. Считать нажатия бесполезно — три быстрых тычка дают тот же счёт,
+     * что треть секунды удержания.
+     *
+     * Важно, что вопрос задаётся **между тиками**, а не «был ли автоповтор вообще».
+     * Глобальный признак копился бы с обычной навигации по меню: к моменту, когда
+     * человек дойдёт до плеера и нажмёт «влево», он давно взведён, и вспышки не
+     * будет никогда. Проверено на телевизоре — именно так и получилось.
      */
 
+    /**
+     * Промежуток, ниже которого тик считается автоповтором, если отпускания не было.
+     *
+     * Подстраховка для кнопок панели и мыши: там `keyup` не приходит вовсе, и одного
+     * признака отпускания не хватило бы. Автоповтор идёт не чаще чем раз в 100 мс
+     * (троттл keypad), человек столько между тычками не выдаёт.
+     */
+    var REPEAT_GAP = 180;
     function create() {
-      /** Кнопка сейчас нажата и ещё не отпущена */
-      var pressed = false;
+      /** Кнопку отпускали с прошлой перемотки */
+      var released = true;
 
       /** В текущей серии был автоповтор */
       var repeated = false;
 
       /** Сколько раз перематывали */
       var ticks = 0;
+
+      /** Когда была прошлая перемотка */
+      var last = 0;
       return {
-        down: function down() {
-          if (pressed) repeated = true;
-          pressed = true;
-        },
+        /**
+         * Отпускание кнопки. Само нажатие не интересует: важно не то, сколько
+         * раз нажали, а было ли отпускание между перемотками.
+         */
         up: function up() {
-          pressed = false;
+          released = true;
         },
-        tick: function tick() {
+        /**
+         * Перемотка. Время передаётся снаружи, чтобы модуль оставался чистым
+         * и проверялся тестами без часов.
+         *
+         * @param {number} now - метка времени, обычно Date.now()
+         */
+        tick: function tick(now) {
+          if (ticks && !released && now - last < REPEAT_GAP) repeated = true;
+          released = false;
+          last = now;
           ticks++;
         },
         /**
          * Серия закончилась: снаружи это таймер, который сбрасывается на каждом
-         * тике. Признак автоповтора и счётчик обнуляются, а вот `pressed` —
-         * нет: кнопку могут держать и дальше.
+         * тике. Всё, что копилось внутри серии, обнуляется.
          *
          * @returns {{hold: boolean, ticks: number}}
          */
@@ -579,18 +462,20 @@
             hold: repeated,
             ticks: ticks
           };
+          released = true;
           repeated = false;
           ticks = 0;
           return result;
         },
-        /** Новый файл или закрытый плеер: чужие нажатия к делу не относятся */reset: function reset() {
-          pressed = false;
+        /** Новый файл или закрытый плеер: прошлые нажатия к делу не относятся */reset: function reset() {
+          released = true;
           repeated = false;
           ticks = 0;
+          last = 0;
         },
         state: function state() {
           return {
-            pressed: pressed,
+            released: released,
             repeated: repeated,
             ticks: ticks
           };
@@ -598,7 +483,51 @@
       };
     }
     var burst = {
-      create: create
+      create: create,
+      REPEAT_GAP: REPEAT_GAP
+    };
+
+    /**
+     * Какую дорожку субтитров показать на время перемотки назад.
+     *
+     * Три источника по убыванию точности. Порядок здесь и есть вся суть: каждый
+     * следующий знает о человеке меньше предыдущего, и спускаться к нему можно,
+     * только когда точный не ответил.
+     *
+     * @param {Array} subs - список дорожек текущего файла
+     * @param {Object} from - что известно о человеке
+     * @param {{lang: string, label: string}} [from.chosen] - что включал руками в этом файле
+     * @param {{l: string, n: string}} [from.remembered] - что запомнено по этой карточке
+     * @param {string} [from.language] - последний язык субтитров вообще
+     * @returns {Object|null} дорожка из списка либо null, если показывать нечего
+     */
+    function choose(subs, from) {
+      // «Отключено» — псевдострока панели, показывать там нечего
+      if (!match$1.realSubs(subs).length) return null;
+      var known = from || {};
+
+      // Включал руками прямо сейчас — сомнений нет
+      if (known.chosen) return match$1.matchSub(subs, known.chosen);
+
+      // Запомнено по этой карточке. Неважно, включены ли субтитры сейчас:
+      // «какие» и «включены ли» — разные вопросы, и нас интересует первый.
+      if (known.remembered) {
+        return match$1.matchSub(subs, {
+          lang: known.remembered.l || '',
+          label: known.remembered.n || ''
+        });
+      }
+
+      // Остался только язык — тогда годится любая дорожка на нём. Пустое название
+      // в запросе именно это и означает: совпадение по языку достаточно.
+      if (!known.language) return null;
+      return match$1.matchSub(subs, {
+        lang: known.language,
+        label: ''
+      });
+    }
+    var choose$1 = {
+      choose: choose
     };
 
     /**
@@ -693,9 +622,9 @@
       Lampa.PlayerVideo.listener.follow('rewind', function () {
         guard('rewind', tick);
       });
-      Lampa.Keypad.listener.follow('keydown', function () {
-        taps.down();
-      });
+
+      // Нажатие не отслеживаем: важно не сколько раз нажали, а отпускали ли
+      // кнопку между двумя перемотками.
       Lampa.Keypad.listener.follow('keyup', function () {
         taps.up();
       });
@@ -717,7 +646,12 @@
           release();
           if (!e.status) return;
           var about = match$1.describe(match$1.selectedSub(subs));
-          if (about) chosen = about;
+          if (!about) return;
+          chosen = about;
+
+          // Плагин обязан работать и без memory, поэтому общий язык
+          // записывает тоже: кто увидел выбор, тот и запомнил.
+          if (about.lang) Lampa.Storage.set(keys.KEYS.subs_lang, about.lang);
         });
       });
     }
@@ -725,7 +659,7 @@
     /* ------------------------------------------------------------------ серия */
 
     function tick() {
-      taps.tick();
+      taps.tick(Date.now());
       if (!series) series = {
         timer: null,
         from: position()
@@ -802,30 +736,25 @@
     /* ---------------------------------------------------------------- дорожка */
 
     /**
-     * Что показывать. Порядок важен: сначала то, что человек включал руками
-     * в этом файле, потом — то, что запомнил memory по этой карточке.
-     *
-     * Если не нашлось ни того ни другого, вспышки не будет вовсе. Угадывать
-     * по языку интерфейса не станем: чужая дорожка на экране раздражает сильнее,
-     * чем её отсутствие.
+     * Что показывать. Сам отбор — в choose.js, здесь только сбор того, что о
+     * человеке известно: за этими тремя источниками стоит хранилище и активность,
+     * а решение должно проверяться тестами без запущенного приложения.
      */
     function pick() {
-      if (!match$1.realSubs(subs).length) return null;
-      if (chosen) return match$1.matchSub(subs, chosen);
-      var saved = remembered();
-      if (!saved) return null;
-      return match$1.matchSub(subs, {
-        lang: saved.l || '',
-        label: saved.n || ''
+      return choose$1.choose(subs, {
+        chosen: chosen,
+        remembered: remembered(),
+        language: language()
       });
     }
 
     /**
-     * Запись memory по текущей карточке.
+     * Дорожка, запомненная memory по текущей карточке.
      *
      * Читаем общий ключ напрямую, а не через `store.create`: тот при чтении
      * перекладывает запись в конец и пишет хранилище, а нам нужно только взглянуть.
-     * `false` в поле означает «субтитры выключены намеренно» — это не дорожка.
+     * Поле `s` отвечает на вопрос «какие субтитры», а не «включены ли» — на второй
+     * отвечает `so`, и нас он не касается: мы включаем на время, а не насовсем.
      */
     function remembered() {
       var card = cardOf();
@@ -835,6 +764,12 @@
       var rec = Lampa.Storage.cache(store.KEY, store.LIMIT, {})[key];
       if (!rec || !rec.s) return null;
       return rec.s.l || rec.s.n ? rec.s : null;
+    }
+
+    /** Последний язык субтитров — общий на все тайтлы */
+    function language() {
+      var saved = Lampa.Storage.get(keys.KEYS.subs_lang, '');
+      return saved ? saved + '' : '';
     }
     function cardOf() {
       var active = Lampa.Activity.active() || {};
@@ -884,6 +819,7 @@
     // доступ для отладки из консоли
     window.__subpeek = {
       burst: taps,
+      choose: choose$1,
       pick: pick,
       state: function state() {
         return {

@@ -21,6 +21,14 @@
     var KEYS = {
       /** Память по тайтлу, общая: memory пишет, continue и subpeek читают */
       watch: 'cc_watch_memory',
+      /**
+       * Язык субтитров, выбранный последним — на всех тайтлах сразу.
+       *
+       * Нужен там, где по карточке ничего не известно: новый фильм, а человек
+       * субтитры в нём ни разу не открывал. Язык меняют куда реже, чем тайтлы,
+       * поэтому одно значение на всех — не упрощение, а точное описание привычки.
+       */
+      subs_lang: 'cc_watch_subs_lang',
       /** Рейтинг студий озвучки с затуханием */
       voices: 'cc_continue_voices',
       /** Уже проверенные раздачи, чтобы не опрашивать их повторно */
@@ -36,120 +44,8 @@
       /** Префикс переключателя плагина, дальше идёт имя файла */
       plugin_on: 'cc_manager_on_'
     };
-
-    /**
-     * Прежние имена. Появились до того, как схема стала общей, и переносятся
-     * разово — при первом запуске плагина, который этим ключом пользуется.
-     */
-    var RENAMED = {
-      watch: 'watch_memory',
-      voices: 'continue_voices',
-      probe: 'continue_probe',
-      no_cam: 'continue_no_cam',
-      seen: 'manager_seen',
-      source: 'manager_source',
-      local_host: 'manager_local_host',
-      plugin_on: 'manager_on_'
-    };
-
-    /**
-     * Значение отсутствует.
-     *
-     * `Storage.get` для незаданного ключа возвращает пустую строку, а не
-     * `undefined`, и попутно приводит типы: `'false'` станет булевым `false`,
-     * а `'0'` — числом. Поэтому проверять можно только на пустую строку —
-     * иначе законный `false` посчитался бы отсутствующим.
-     */
-    function empty(value) {
-      return value === '' || value === undefined || value === null;
-    }
-
-    /**
-     * Перенести значения из старых ключей в новые.
-     *
-     * Идемпотентно: старый ключ после переноса удаляется, а если новый уже занят —
-     * старый его не затирает. Повторный вызов не находит ничего.
-     *
-     * Удаление идёт через `drop`, а не через `Lampa.Storage.remove`: тот снимает
-     * значение с синхронизации на сервере и localStorage не трогает вовсе
-     * ([storage.js:253](src/core/storage/storage.js:253)).
-     *
-     * @param {Object} storage - Lampa.Storage или его подмена в тестах
-     * @param {Function} drop - (name) => void, удаление ключа из localStorage
-     * @param {string[]} names - какие ключи переносить, имена полей KEYS
-     * @returns {number} сколько значений перенесено
-     */
-    function migrate(storage, drop, names) {
-      var moved = 0;
-      names.forEach(function (name) {
-        var from = RENAMED[name];
-        var to = KEYS[name];
-        if (!from || !to) return;
-        var old = storage.get(from, '');
-        if (empty(old)) return;
-
-        // новый ключ уже заполнен — значит миграция прошла раньше
-        if (!empty(storage.get(to, ''))) {
-          drop(from);
-          return;
-        }
-        storage.set(to, old);
-        drop(from);
-        moved++;
-      });
-      return moved;
-    }
-
-    /**
-     * Удалить старые ключи, которые начинаются с префикса.
-     *
-     * Нужно для `manager_on_<файл>`: таких ключей столько же, сколько плагинов,
-     * и переносить их незачем — менеджер всё равно приводит переключатели к факту
-     * при каждой отрисовке. Но оставлять мусор в хранилище тоже не дело.
-     *
-     * @param {Function} list - () => string[], имена всех ключей хранилища
-     * @param {Function} drop - (name) => void
-     * @param {string} name - имя поля KEYS, чей прежний префикс подчищаем
-     * @returns {number} сколько ключей удалено
-     */
-    function sweep(list, drop, name) {
-      var prefix = RENAMED[name];
-      if (!prefix) return 0;
-      var dropped = 0;
-      list().forEach(function (key) {
-        if (key.indexOf(prefix) !== 0) return;
-        drop(key);
-        dropped++;
-      });
-      return dropped;
-    }
-
-    /** Удаление ключа из настоящего localStorage */
-    function dropper() {
-      return function (name) {
-        try {
-          window.localStorage.removeItem(name);
-        } catch (_unused) {}
-      };
-    }
-
-    /** Имена всех ключей настоящего localStorage */
-    function lister() {
-      return function () {
-        try {
-          return Object.keys(window.localStorage);
-        } catch (_unused2) {
-          return [];
-        }
-      };
-    }
     var keys = {
-      KEYS: KEYS,
-      RENAMED: RENAMED,
-      migrate: migrate,
-      sweep: sweep,
-      dropper: dropper,
-      lister: lister
+      KEYS: KEYS
     };
 
     /**
@@ -445,42 +341,6 @@
       }
 
       /**
-       * Перенос из ключей, которыми пользовались отдельные плагины до объединения.
-       *
-       * Разбирается один раз: после переноса старые ключи удаляются, и повторный
-       * вызов уже ничего не находит.
-       *
-       * Внимание на `q` у continue_last — там лежало разрешение, а не название.
-       */
-      function migrate() {
-        var map = all();
-        var moved = 0;
-        var last = storage.cache('continue_last', 150, {});
-        Object.keys(last).forEach(function (key) {
-          var rec = map[key] = map[key] || {};
-          if (last[key].v && !rec.v) rec.v = last[key].v;
-          if (last[key].q && !rec.r) rec.r = last[key].q;
-          if (!rec.t) rec.t = last[key].t || 0;
-          moved++;
-        });
-        var audio = storage.cache('audio_tracks', 200, {});
-        Object.keys(audio).forEach(function (key) {
-          var rec = map[key] = map[key] || {};
-          if (!rec.a && (audio[key].l || audio[key].n)) rec.a = {
-            l: audio[key].l,
-            n: audio[key].n
-          };
-          if (!rec.t) rec.t = audio[key].t || 0;
-          moved++;
-        });
-        if (!moved) return 0;
-        storage.set(KEY, map);
-        storage.set('continue_last', {});
-        storage.set('audio_tracks', {});
-        return moved;
-      }
-
-      /**
        * Продублировать рабочее название в штатный список уточнения.
        *
        * Ключ `user_clarifys` синхронизируется через CUB и читается обычным экраном
@@ -518,7 +378,6 @@
       return {
         get: get,
         set: set,
-        migrate: migrate,
         clarify: clarify,
         lastClarify: lastClarify,
         cardID: cardID,
@@ -670,14 +529,6 @@
       if (window.plugin_memory_ready) return;
       window.plugin_memory_ready = true;
       memory = store.create(Lampa.Storage);
-      try {
-        // сначала имя ключа, потом содержимое: старые ключи отдельных
-        // плагинов разбираются уже внутри нового
-        keys.migrate(Lampa.Storage, keys.dropper(), ['watch']);
-        memory.migrate();
-      } catch (err) {
-        console.error('Memory', 'migrate error:', err);
-      }
       followAudio();
       followSearch();
     }
@@ -783,6 +634,11 @@
      * Выключенные субтитры — такое же осознанное решение, как выбранные, поэтому
      * «выключено» хранится явно. Иначе при следующем запуске сработала бы штатная
      * настройка «включать субтитры сразу», и их пришлось бы выключать каждую серию.
+     *
+     * Хранятся два разных факта: `so` — включены ли субтитры, `s` — какие именно
+     * выбирали. Второе живёт дольше первого. Выключив субтитры, человек не
+     * забывает, какие они были, и это знание нужно другим плагинам — subpeek
+     * показывает ту же дорожку на время перемотки назад.
      */
     function onSubs(subs) {
       if (!current) current = {
@@ -792,18 +648,18 @@
       };
       current.subs = subs;
       var rec = current.card && memory.get(current.card);
-      if (!rec || rec.s === undefined) return;
+      if (!rec || rec.so === undefined) return;
       applySubs(subs, rec);
     }
     function applySubs(subs, rec) {
       // Выключено. Проверять текущее состояние нельзя: в этот момент плеер ещё
       // не показал своё, а через мгновение покажет.
-      if (!rec.s) {
+      if (!rec.so) {
         match$1.applySub(subs, null);
         Lampa.PlayerVideo.subsview(false);
         return;
       }
-      var wanted = match$1.matchSub(subs, {
+      var wanted = rec.s && match$1.matchSub(subs, {
         lang: rec.s.l || '',
         label: rec.s.n || ''
       });
@@ -858,8 +714,8 @@
       current.subs = subs;
       if (!subs || !subs.length) return;
       var rec = current.card && memory.get(current.card);
-      if (!rec || rec.s === undefined) return;
-      var wanted = rec.s ? match$1.matchSub(subs, {
+      if (!rec || rec.so === undefined) return;
+      var wanted = rec.so && rec.s ? match$1.matchSub(subs, {
         lang: rec.s.l || '',
         label: rec.s.n || ''
       }) : null;
@@ -874,12 +730,23 @@
       if (!match$1.realSubs(current.subs).length) return;
       var chosen = match$1.selectedSub(current.subs);
       var about = chosen && match$1.describe(chosen);
-      memory.set(current.card, {
-        s: about ? {
+
+      // Выключение записывает только `so`: поле `s` остаётся нетронутым, и память
+      // о выбранной когда-то дорожке переживает выключение.
+      memory.set(current.card, about ? {
+        so: true,
+        s: {
           l: about.lang,
           n: about.label
-        } : false
+        }
+      } : {
+        so: false
       });
+
+      // Язык субтитров человек меняет куда реже, чем тайтлы, поэтому последний
+      // выбранный держим ещё и общим — он выручает на карточке, где своей записи
+      // ещё нет.
+      if (about && about.lang) Lampa.Storage.set(keys.KEYS.subs_lang, about.lang);
     }
 
     /* --------------------------------------------------------------- название */
