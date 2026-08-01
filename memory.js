@@ -17,13 +17,40 @@
      */
     function describe(track) {
       if (!track) return null;
-      var lang = clean$1(track.language || track.lang || '');
+      var lang = language(track.language || track.lang || '');
       var label = clean$1(track.label || track.name || '');
       if (!lang && !label) return null;
       return {
         lang: lang,
         label: label
       };
+    }
+
+    /**
+     * Код языка приходит в разном виде: в браузере двухбуквенный (`ru`),
+     * на webOS трёхбуквенный (`rus`). Без приведения запись, сделанная на одном
+     * устройстве, не совпала бы с дорожками на другом.
+     */
+    var LANGS = {
+      rus: 'ru',
+      ukr: 'uk',
+      eng: 'en',
+      kor: 'ko',
+      jpn: 'ja',
+      chi: 'zh',
+      zho: 'zh',
+      ger: 'de',
+      deu: 'de',
+      fre: 'fr',
+      fra: 'fr',
+      spa: 'es',
+      ita: 'it',
+      pol: 'pl',
+      tur: 'tr'
+    };
+    function language(value) {
+      var lang = clean$1(value);
+      return LANGS[lang] || lang;
     }
 
     /**
@@ -135,17 +162,26 @@
      * поставить выбранной и позвать её onSelect.
      *
      * Видимость переключает вызывающий: за неё отвечает Video.subsview.
+     *
+     * Выключение — отдельный случай. На webOS `mode` это не поле, а сеттер, и
+     * реагирует он только на `showing` ([webos.js:76](src/interaction/player/webos.js:76)),
+     * поэтому «выключить всё» там не выключает ничего. Выключением служит
+     * псевдострока «Отключено» с индексом -1: её и выбираем.
      */
     function applySub(subs, track) {
-      (subs || []).forEach(function (item) {
-        item.mode = 'disabled';
+      var list = subs || [];
+      var target = track || list.find(function (item) {
+        return item && item.index === -1;
+      }) || null;
+      list.forEach(function (item) {
         item.selected = false;
+        if (item !== target) item.mode = 'disabled';
       });
-      if (!track) return false;
-      track.mode = 'showing';
-      track.selected = true;
-      if (typeof track.onSelect === 'function') track.onSelect(track);
-      return true;
+      if (!target) return false;
+      target.mode = 'showing';
+      target.selected = true;
+      if (typeof target.onSelect === 'function') target.onSelect(target);
+      return !!track;
     }
     function matchSub(subs, saved) {
       return match(realSubs(subs), saved);
@@ -518,6 +554,25 @@
           onSubs(e.subs);
         } catch (err) {
           console.error('Memory', 'subs error:', err);
+        }
+      });
+
+      // На webOS событий tracks и subs не бывает вовсе: плеер обнуляет список
+      // и уходит в нативную ветку ([video.js:649](src/interaction/player/video.js:649)),
+      // а дорожки приезжают отдельными событиями и попадают сразу в панель.
+      // Без этой подписки на телевизоре плагин молчал бы, ничего не восстанавливая.
+      Lampa.PlayerVideo.listener.follow('webos_tracks', function (e) {
+        try {
+          onTracks(e.tracks);
+        } catch (err) {
+          console.error('Memory', 'webos tracks error:', err);
+        }
+      });
+      Lampa.PlayerVideo.listener.follow('webos_subs', function (e) {
+        try {
+          onSubs(e.subs);
+        } catch (err) {
+          console.error('Memory', 'webos subs error:', err);
         }
       });
       Lampa.Player.listener.follow('destroy', function () {
