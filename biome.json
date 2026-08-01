@@ -1,7 +1,7 @@
 {
     "$schema": "https://biomejs.dev/schemas/2.5.6/schema.json",
     "files": {
-        "includes": ["**/*.js", "!**/voices.js"]
+        "includes": ["src/**/*.js", "tools/**/*.js", "!**/voices.js"]
     },
     "formatter": {
         "enabled": true,

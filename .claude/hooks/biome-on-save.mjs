@@ -1,7 +1,4 @@
 // PostToolUse: прогоняет Biome по исходнику плагина сразу после правки.
-//
-// Конфиг лежит в этом репозитории, а исходники — в рабочей копии Lampa,
-// поэтому нужен --config-path: сам Biome за пределы своего корня не выходит.
 
 import {readFileSync} from 'node:fs'
 import {basename, dirname, extname, resolve, sep} from 'node:path'
@@ -21,17 +18,15 @@ try {
     if (!file) process.exit(0)
 
     const full = resolve(file)
-    const parts = full.split(sep)
-    const at = parts.indexOf('lampa-source')
 
-    // Только исходники плагинов Lampa: всё остальное Biome не касается.
-    if (at === -1 || parts[at + 1] !== 'plugins') process.exit(0)
+    // Только исходники плагинов: бандлы в корне и всё вне src/ Biome не касается.
+    if (!full.startsWith(resolve(root, 'src') + sep)) process.exit(0)
     if (extname(full) !== '.js') process.exit(0)
     if (basename(full) === 'voices.js') process.exit(0) // справочные данные, исключены и в biome.json
 
     // --error-on-warnings: без него Biome выходит с нулём даже когда что-то нашёл,
     // и предупреждения (например, неиспользуемая переменная) прошли бы молча.
-    const args = [biome, 'check', '--write', '--error-on-warnings', '--config-path', root, full]
+    const args = [biome, 'check', '--write', '--error-on-warnings', full]
     const res = spawnSync(process.execPath, args, {encoding: 'utf8'})
 
     if (res.status === 0) process.exit(0)

@@ -3,13 +3,22 @@
     "private": true,
     "type": "module",
     "scripts": {
-        "lint": "biome check ../lampa-source/plugins/shared ../lampa-source/plugins/subpeek ../lampa-source/plugins/continue ../lampa-source/plugins/manager ../lampa-source/plugins/memory ../lampa-source/plugins/devtools",
-        "format": "biome check --write ../lampa-source/plugins/shared ../lampa-source/plugins/subpeek ../lampa-source/plugins/continue ../lampa-source/plugins/manager ../lampa-source/plugins/memory ../lampa-source/plugins/devtools",
-        "test": "cd ../lampa-source && npx vitest run plugins/shared plugins/subpeek plugins/continue plugins/memory",
+        "build": "node tools/build.js",
+        "dev": "node tools/build.js --watch",
+        "test": "vitest run",
+        "lint": "biome check src tools",
+        "format": "biome check --write src tools",
         "index:events": "node tools/index-events.mjs"
     },
     "devDependencies": {
+        "@babel/preset-env": "^7.15.8",
         "@biomejs/biome": "^2.3.0",
-        "ts-morph": "^28.0.0"
+        "@rollup/plugin-babel": "^5.3.0",
+        "@rollup/plugin-commonjs": "^21.0.0",
+        "@rollup/plugin-node-resolve": "^13.0.5",
+        "chokidar": "^3.5.2",
+        "rollup": "~2.58.0",
+        "ts-morph": "^28.0.0",
+        "vitest": "^0.32.4"
     }
 }
