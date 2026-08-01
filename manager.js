@@ -31,7 +31,7 @@
       descr: 'Запуск нужной серии без выбора раздачи'
     }];
     var ICON = "<svg width=\"38\" height=\"38\" viewBox=\"0 0 38 38\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n    <rect x=\"2\" y=\"2\" width=\"14\" height=\"14\" rx=\"3\" stroke=\"white\" stroke-width=\"2.5\"/>\n    <rect x=\"22\" y=\"2\" width=\"14\" height=\"14\" rx=\"3\" stroke=\"white\" stroke-width=\"2.5\"/>\n    <rect x=\"2\" y=\"22\" width=\"14\" height=\"14\" rx=\"3\" stroke=\"white\" stroke-width=\"2.5\"/>\n    <path d=\"M29 22V36M22 29H36\" stroke=\"white\" stroke-width=\"2.5\" stroke-linecap=\"round\"/>\n</svg>";
-    var catalog = FALLBACK;
+    var _catalog = FALLBACK;
     function startPlugin() {
       if (window.plugin_manager_ready) return;
       window.plugin_manager_ready = true;
@@ -40,15 +40,19 @@
         icon: ICON,
         name: Lampa.Lang.translate('manager_title')
       });
-      render(catalog);
+
+      // Себя менеджер подписывает сам: в манифест он не входит, а безымянная
+      // строка в списке расширений мешает не меньше остальных.
+      nameSelf();
+      render(_catalog);
       loadManifest(function (list) {
-        catalog = list;
+        _catalog = list;
 
         // Сначала приводим список плагинов в соответствие манифесту, потом
         // рисуем настройки: иначе переключатель запомнит состояние «выключен»,
         // которое было до установки.
-        reconcile(catalog);
-        render(catalog);
+        _reconcile(_catalog);
+        render(_catalog);
       });
 
       // Список плагинов обновляется при каждом заходе в настройки: иначе новый
@@ -60,9 +64,9 @@
       Lampa.Settings.listener.follow('open', function (e) {
         if (e.name !== 'main') return;
         loadManifest(function (list) {
-          catalog = list;
-          reconcile(catalog);
-          render(catalog);
+          _catalog = list;
+          _reconcile(_catalog);
+          render(_catalog);
         });
       });
     }
@@ -79,7 +83,7 @@
      * пришлось бы выбирать между «новые плагины не появляются» и «выключенные
      * возвращаются при каждом запуске».
      */
-    function reconcile(list) {
+    function _reconcile(list) {
       var seen = known();
       var added = [];
       list.forEach(function (item) {
@@ -96,6 +100,10 @@
         });
         var first = seen.indexOf(item.file) === -1;
         if (first) seen.push(item.file);
+
+        // название могло появиться в манифесте позже самого плагина
+        var exist = installed(item.file);
+        if (exist) nameIt(exist);
         if (available(item) && !installed(item.file) && (inherited || first && item["default"] !== false)) {
           install(item.file);
           added.push(item.name || item.file);
@@ -170,13 +178,38 @@
       if (!value) return [];
       return Array.isArray(value) ? value : [value];
     }
-    function loadManifest(done) {
+
+    /** Сколько раз пробуем достать манифест и с какой паузой */
+    var TRIES = 4;
+    var RETRY = 3000;
+
+    /**
+     * Манифест — единственный источник знаний о плагинах, и без него менеджер
+     * не делает ничего: ни названий, ни новых плагинов, ни переименований.
+     *
+     * Одной попытки мало. Телевизор запускает приложение раньше, чем поднимается
+     * сеть, и запрос при старте проваливается молча — а выглядит это так, будто
+     * плагины «Без названия» и новых просто нет. Поэтому пробуем несколько раз
+     * с нарастающей паузой и говорим о неудаче в консоль.
+     */
+    function loadManifest(done, attempt) {
       var network = new Lampa.Reguest();
+      attempt = attempt || 1;
       network.silent(MANIFEST + '?ts=' + Date.now(), function (json) {
-        if (Array.isArray(json) && json.length) done(json);
-      }, function () {}, false, {
+        if (Array.isArray(json) && json.length) return done(json);
+        retry(done, attempt, 'пустой ответ');
+      }, function (error) {
+        return retry(done, attempt, error);
+      }, false, {
         dataType: 'json'
       });
+    }
+    function retry(done, attempt, reason) {
+      console.log('Manager', 'манифест не прочитан, попытка', attempt, 'из', TRIES, '—', reason);
+      if (attempt >= TRIES) return;
+      setTimeout(function () {
+        return loadManifest(done, attempt + 1);
+      }, RETRY * attempt);
     }
 
     /**
@@ -204,7 +237,7 @@
           reinstallAll();
 
           // перерисовываем, чтобы адреса под плагинами показали новый источник
-          render(catalog);
+          render(_catalog);
 
           // экран настроек может быть уже закрыт — обновление тогда не нужно
           try {
@@ -229,7 +262,7 @@
           reinstallAll();
 
           // адрес открывает неопубликованные плагины, список меняется
-          render(catalog);
+          render(_catalog);
           try {
             Lampa.Settings.update();
           } catch (_unused2) {}
@@ -321,7 +354,7 @@
      * как только компьютер выключен.
      */
     function baseFor(file) {
-      var item = catalog.find(function (p) {
+      var item = _catalog.find(function (p) {
         return p.file === file;
       });
       if (item && item.local) return localBase();
@@ -342,12 +375,46 @@
     }
     function install(file) {
       var exist = installed(file);
-      if (exist && exist.url === urlFor(file)) return;
+      if (exist && exist.url === urlFor(file)) return nameIt(exist);
       if (exist) Lampa.Plugins.remove(exist);
       Lampa.Plugins.add({
         url: urlFor(file),
-        status: 1
+        status: 1,
+        name: titleOf(file)
       });
+    }
+
+    /**
+     * Название в штатном списке расширений.
+     *
+     * Lampa показывает `data.name`, а плагин, добавленный по адресу, приходит без
+     * него — отсюда список из одинаковых «Без названия», в котором ничего не найти.
+     * Поле обычное: сама Lampa даёт задать его вручную через «Изменить название»,
+     * так что мы просто заполняем его за человека.
+     */
+    function titleOf(file) {
+      if (file === 'manager.js') return Lampa.Lang.translate('manager_title');
+      var item = _catalog.find(function (p) {
+        return p.file === file;
+      });
+      return item && item.name || file;
+    }
+    function nameSelf() {
+      var exist = installed('manager.js');
+      if (exist) nameIt(exist);
+    }
+
+    /**
+     * Дописать название уже установленному плагину.
+     *
+     * Переустанавливать ради этого нельзя: адрес верный, а лишнее удаление
+     * и добавление заставило бы Lampa грузить плагин заново.
+     */
+    function nameIt(plugin) {
+      var title = titleOf(ourFile(plugin.url) || '');
+      if (plugin.name === title) return;
+      plugin.name = title;
+      Lampa.Plugins.save(plugin);
     }
     function uninstall(file) {
       var exist = installed(file);
@@ -356,15 +423,25 @@
 
     /**
      * Смена источника: переставляем всё включённое на новые адреса.
-     *
-     * Плагины, которых в репозитории нет, при уходе с локального сервера
-     * отключаются — иначе после переключения они остались бы в списке
-     * с заведомо мёртвым адресом.
      */
     function reinstallAll() {
-      catalog.forEach(function (item) {
-        if (!installed(item.file)) return;
-        if (available(item)) install(item.file);else uninstall(item.file);
+      // Недоступное на новом источнике отключаем по каталогу: адрес такого плагина
+      // мог перестать опознаваться как наш — например, вместе с источником стёрли
+      // и адрес компьютера, — и по списку установленных его было бы не найти.
+      _catalog.forEach(function (item) {
+        if (!available(item) && installed(item.file)) uninstall(item.file);
+      });
+
+      // А переставляем по списку установленного, а не по каталогу: манифест мог
+      // ещё не приехать, и тогда каталог — это заглушка из одного плагина,
+      // а всё остальное молча осталось бы на прежнем источнике.
+      Lampa.Plugins.get().slice().forEach(function (plugin) {
+        var file = ourFile(plugin.url);
+
+        // Менеджер остаётся там, откуда его поставили: уехав на выключенный
+        // компьютер, он забрал бы с собой и возможность переключиться обратно.
+        if (!file || file === 'manager.js') return;
+        install(file);
       });
     }
     Lampa.Lang.add({
@@ -429,6 +506,21 @@
         if (e.type === 'ready') startPlugin();
       });
     }
+
+    // доступ для отладки из консоли
+    window.__manager = {
+      catalog: function catalog() {
+        return _catalog;
+      },
+      reconcile: function reconcile() {
+        return _reconcile(_catalog);
+      },
+      titleOf: titleOf,
+      ourFile: ourFile,
+      installed: installed,
+      base: base,
+      localBase: localBase
+    };
     var manager = {};
 
     return manager;
