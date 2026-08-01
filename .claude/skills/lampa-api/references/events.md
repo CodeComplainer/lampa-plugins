@@ -2,7 +2,7 @@
 
 Собрано автоматически: `npm run index:events`. **Руками не править — перезапишется.**
 
-Источник — `lampa-source` на коммите `3896f4b` от 2026-07-21.
+Источник — `lampa-source` на коммите `1e8f2ce8` от 2026-08-01.
 Каналов: 190, мест отправки: 311, шин: 36.
 
 Реестр построен по местам **отправки** (`.send()`) — то есть описывает то, что
@@ -13,16 +13,16 @@
 ```
 `Lampa.Шина.listener` `канал`
   e: поле, поле               ← поля объекта, который придёт в обработчик
-  2 подписки в ядре · путь/файл.js:304, 1381   ← сколько раз ядро само слушает
-```                                             и откуда шлётся
+  2 подписки в ядре · путь/файл.js ×2   ← сколько раз ядро само слушает
+```                                      и откуда шлётся, ×N — сколько раз
 
 Если канал шлётся с разным `type`, поля расписаны по каждому отдельно: наборы
 у них не совпадают, и объединять их нельзя.
 
 ```
 `Lampa.Шина.listener` `канал`
-  type=первый   e: поле, поле · путь/файл.js:96
-  type=второй   e: поле · путь/файл.js:215, 270
+  type=первый   e: поле, поле · путь/файл.js
+  type=второй   e: поле · путь/файл.js ×2
   1 подписка в ядре
 ```
 
@@ -35,7 +35,21 @@
 - Разделы **«не экспортируется»** — внутренние шины, из плагина недоступны.
 
 Это указатель, а не замена исходникам: условия отправки и точный смысл полей —
-только в коде, по ссылкам `файл:строка` (пути даны от `src/`).
+только в коде. Пути даны от `src/`, а до самого вызова доводит имя канала: оно
+стоит литералом внутри `.send(…)` во всех 311 местах отправки без исключения.
+
+```bash
+grep -n "send('канал'" ../lampa-source/src/путь/файл.js
+```
+
+Число найденных строк совпадёт с `×N` (у каналов с несколькими `type` — с суммой
+по вариантам). Кавычки в шаблоне обязательны: без них `rewind` поймает ещё и
+CSS-класс.
+
+Номеров строк здесь нет намеренно. Они устаревали при каждом обновлении апстрима
+и давали дифф на полсотни строк, где не менялось ничего: ни канал, ни поля, ни
+файл. Теперь дифф этого файла означает, что событийная поверхность Lampa
+действительно изменилась.
 
 ## Шины
 
@@ -79,850 +93,850 @@
 ## Lampa.Listener
 
 `Lampa.Listener` `activity`
-  type=archive  e: component, object · interaction/activity/activity.js:428
-  type=create   e: component, object · interaction/activity/activity.js:331
-  type=destroy  e: component, object · interaction/activity/activity.js:245, 412, 603
-  type=init     e: component, object · interaction/activity/activity.js:327
-  type=start    e: component, object · interaction/activity/activity.js:488
+  type=archive  e: component, object · interaction/activity/activity.js
+  type=create   e: component, object · interaction/activity/activity.js
+  type=destroy  e: component, object · interaction/activity/activity.js ×3
+  type=init     e: component, object · interaction/activity/activity.js
+  type=start    e: component, object · interaction/activity/activity.js
   1 подписка в ядре
 
 `Lampa.Listener` `app`
-  type=ready  без payload · app.js:727
-  type=start  без payload · app.js:502
+  type=ready  без payload · app.js
+  type=start  без payload · app.js
   3 подписки в ядре
 
 `Lampa.Listener` `full`
-  type=build     e: body, data, item, link, name, props · components/full.js:270
-  type=complite  e: body, data, link, object, props · components/full.js:215
-  type=options   e: link, options, props · components/full/start/options.js:11
-  type=start     e: body, data, link, object, props · components/full.js:96
+  type=build     e: body, data, item, link, name, props · components/full.js
+  type=complite  e: body, data, link, object, props · components/full.js
+  type=options   e: link, options, props · components/full/start/options.js
+  type=start     e: body, data, link, object, props · components/full.js
   1 подписка в ядре
 
 `Lampa.Listener` `line`
   e: active, body, data, items, line, params, scroll
-  0 подписок в ядре · interaction/items/old/line.js:49 · interaction/items/line/module/event.js:3
+  0 подписок в ядре · interaction/items/old/line.js · interaction/items/line/module/event.js
 
 `Lampa.Listener` `menu`
-  type=action  e: abort, action, target · interaction/menu/menu.js:199
-  type=end     без payload · interaction/menu/menu.js:130
-  type=start   e: body · interaction/menu/menu.js:71
-  type=toggle  без payload · interaction/menu/menu.js:393
+  type=action  e: abort, action, target · interaction/menu/menu.js
+  type=end     без payload · interaction/menu/menu.js
+  type=start   e: body · interaction/menu/menu.js
+  type=toggle  без payload · interaction/menu/menu.js
   0 подписок в ядре
 
 `Lampa.Listener` `mytorrents`
-  type=onlong  e: menu, object · components/mytorrents.js:94
+  type=onlong  e: menu, object · components/mytorrents.js
   0 подписок в ядре
 
 `Lampa.Listener` `profile_check`
   e: profile
-  1 подписка в ядре · core/account/profile.js:83
+  1 подписка в ядре · core/account/profile.js
 
 `Lampa.Listener` `profile_select`
   e: profile
-  1 подписка в ядре · core/account/profile.js:185
+  1 подписка в ядре · core/account/profile.js
 
 `Lampa.Listener` `request_before`
   e: params
-  0 подписок в ядре · utils/reguest.js:436, 592
+  0 подписок в ядре · utils/reguest.js ×2
 
 `Lampa.Listener` `request_error`
   e: error, exception, params
-  1 подписка в ядре · utils/reguest.js:462, 597
+  1 подписка в ядре · utils/reguest.js ×2
 
 `Lampa.Listener` `request_secuses`
   e: abort, data, params
-  1 подписка в ядре · utils/reguest.js:516, 622
+  1 подписка в ядре · utils/reguest.js ×2
 
 `Lampa.Listener` `resize_end`
   без payload
-  3 подписки в ядре · core/layer.js:30
+  3 подписки в ядре · core/layer.js
 
 `Lampa.Listener` `resize_start`
   без payload
-  1 подписка в ядре · core/layer.js:15
+  1 подписка в ядре · core/layer.js
 
 `Lampa.Listener` `state:changed`
   e: card, data, id, method, reason, target, viewed
-  7 подписок в ядре · core/favorite.js:138, 174, 345 · core/timetable.js:264 · interaction/timeline.js:31, 103 · +1 файл.
+  7 подписок в ядре · core/favorite.js ×3 · core/timetable.js · interaction/timeline.js ×2 · +1 файл.
 
 `Lampa.Listener` `torrent`
-  type=onenter  e: element, item · components/torrents.js:918
-  type=onlong   e: element, item, menu · components/torrents.js:938
-  type=render   e: element, item · components/torrents.js:962
+  type=onenter  e: element, item · components/torrents.js
+  type=onlong   e: element, item, menu · components/torrents.js
+  type=render   e: element, item · components/torrents.js
   0 подписок в ядре
 
 `Lampa.Listener` `torrent_file`
-  type=list_close  без payload · interaction/torrent.js:631
-  type=list_open   e: items, params · interaction/torrent.js:312
-  type=onenter     e: element, item, items, params · interaction/torrent.js:443
-  type=onfocus     e: element, item, items, params · interaction/torrent.js:532
-  type=onlong      e: element, item, items, menu, params · interaction/torrent.js:485
-  type=render      e: element, item, items, params · interaction/torrent.js:553
+  type=list_close  без payload · interaction/torrent.js
+  type=list_open   e: items, params · interaction/torrent.js
+  type=onenter     e: element, item, items, params · interaction/torrent.js
+  type=onfocus     e: element, item, items, params · interaction/torrent.js
+  type=onlong      e: element, item, items, menu, params · interaction/torrent.js
+  type=render      e: element, item, items, params · interaction/torrent.js
   2 подписки в ядре
 
 `Lampa.Listener` `worker_storage`
-  type=insert  e: from, name, to · core/storage/workers.js:102
+  type=insert  e: from, name, to · core/storage/workers.js
   1 подписка в ядре
 
 ## Lampa.Activity.listener
 
 `Lampa.Activity.listener` `backward`
   e: count
-  1 подписка в ядре · interaction/activity/activity.js:400
+  1 подписка в ядре · interaction/activity/activity.js
 
 `Lampa.Activity.listener` `popstate`
   e: count
-  0 подписок в ядре · interaction/activity/activity.js:97, 339
+  0 подписок в ядре · interaction/activity/activity.js ×2
 
 ## Lampa.Controller.listener
 
 `Lampa.Controller.listener` `toggle`
   e: name
-  0 подписок в ядре · core/controller.js:149
+  0 подписок в ядре · core/controller.js
 
 ## Lampa.Extensions.listener
 
 `Lampa.Extensions.listener` `close`
   без payload
-  0 подписок в ядре · interaction/extensions/extensions.js:34
+  0 подписок в ядре · interaction/extensions/extensions.js
 
 `Lampa.Extensions.listener` `open`
   e: extensions
-  0 подписок в ядре · interaction/extensions/extensions.js:45
+  0 подписок в ядре · interaction/extensions/extensions.js
 
 ## Lampa.Favorite.listener
 
 `Lampa.Favorite.listener` `add`
   e: card, where
-  0 подписок в ядре · core/favorite.js:107, 115
+  0 подписок в ядре · core/favorite.js ×2
 
 `Lampa.Favorite.listener` `added`
   e: card, where
-  0 подписок в ядре · core/favorite.js:135
+  0 подписок в ядре · core/favorite.js
 
 `Lampa.Favorite.listener` `remove`
   e: card, method, where
-  2 подписки в ядре · core/favorite.js:155, 160, 168
+  2 подписки в ядре · core/favorite.js ×3
 
 ## Lampa.Keypad.listener
 
 `Lampa.Keypad.listener` `back`
   e: code, enabled, event
-  0 подписок в ядре · core/keypad.js:178
+  0 подписок в ядре · core/keypad.js
 
 `Lampa.Keypad.listener` `down`
   e: code, enabled, event
-  0 подписок в ядре · core/keypad.js:95
+  0 подписок в ядре · core/keypad.js
 
 `Lampa.Keypad.listener` `enter`
   e: code, enabled, event
-  1 подписка в ядре · core/keypad.js:229
+  1 подписка в ядре · core/keypad.js
 
 `Lampa.Keypad.listener` `keydown`
   e: code, enabled, event
-  10 подписок в ядре · core/keypad.js:58
+  10 подписок в ядре · core/keypad.js
 
 `Lampa.Keypad.listener` `keyup`
   e: code, enabled, event
-  1 подписка в ядре · core/keypad.js:223
+  1 подписка в ядре · core/keypad.js
 
 `Lampa.Keypad.listener` `left`
   e: code, enabled, event
-  0 подписок в ядре · core/keypad.js:70
+  0 подписок в ядре · core/keypad.js
 
 `Lampa.Keypad.listener` `longdown`
   e: code, enabled, event
-  0 подписок в ядре · core/keypad.js:208
+  0 подписок в ядре · core/keypad.js
 
 `Lampa.Keypad.listener` `right`
   e: code, enabled, event
-  0 подписок в ядре · core/keypad.js:86
+  0 подписок в ядре · core/keypad.js
 
 `Lampa.Keypad.listener` `todown`
   e: code, enabled, event
-  0 подписок в ядре · core/keypad.js:111
+  0 подписок в ядре · core/keypad.js
 
 `Lampa.Keypad.listener` `toggle`
   e: status
-  0 подписок в ядре · core/keypad.js:24
+  0 подписок в ядре · core/keypad.js
 
 `Lampa.Keypad.listener` `toup`
   e: code, enabled, event
-  0 подписок в ядре · core/keypad.js:103
+  0 подписок в ядре · core/keypad.js
 
 `Lampa.Keypad.listener` `up`
   e: code, enabled, event
-  0 подписок в ядре · core/keypad.js:78
+  0 подписок в ядре · core/keypad.js
 
 ## Lampa.Modal.listener
 
 `Lampa.Modal.listener` `close`
   e: active
-  0 подписок в ядре · interaction/modal.js:255
+  0 подписок в ядре · interaction/modal.js
 
 `Lampa.Modal.listener` `fullshow`
   e: active, html
-  0 подписок в ядре · interaction/modal.js:90
+  0 подписок в ядре · interaction/modal.js
 
 `Lampa.Modal.listener` `preshow`
   e: active
-  0 подписок в ядре · interaction/modal.js:39
+  0 подписок в ядре · interaction/modal.js
 
 `Lampa.Modal.listener` `toggle`
   e: active, html
-  1 подписка в ядре · interaction/modal.js:193
+  1 подписка в ядре · interaction/modal.js
 
 `Lampa.Modal.listener` `update`
   e: active, html, new_html
-  0 подписок в ядре · interaction/modal.js:237
+  0 подписок в ядре · interaction/modal.js
 
 ## Lampa.Notice.listener
 
 `Lampa.Notice.listener` `select`
   e: display, element
-  0 подписок в ядре · interaction/notice/notice.js:140
+  0 подписок в ядре · interaction/notice/notice.js
 
 `Lampa.Notice.listener` `viewed`
   e: display
-  0 подписок в ядре · interaction/notice/notice.js:193
+  0 подписок в ядре · interaction/notice/notice.js
 
 ## Lampa.Params.listener
 
 `Lampa.Params.listener` `button`
   e: name
-  0 подписок в ядре · interaction/settings/params.js:341
+  0 подписок в ядре · interaction/settings/params.js
 
 `Lampa.Params.listener` `update_scroll`
   без payload
-  1 подписка в ядре · interaction/parental_control.js:111 · interaction/settings/params.js:355, 436
+  1 подписка в ядре · interaction/parental_control.js · interaction/settings/params.js ×2
 
 `Lampa.Params.listener` `update_scroll_position`
   без payload
-  1 подписка в ядре · interaction/settings/params.js:486
+  1 подписка в ядре · interaction/settings/params.js
 
 ## Lampa.Player.listener
 
 `Lampa.Player.listener` `create`
   e: abort, data
-  0 подписок в ядре · interaction/player.js:1193
+  0 подписок в ядре · interaction/player.js
 
 `Lampa.Player.listener` `destroy`
   без payload
-  1 подписка в ядре · interaction/player.js:718, 1024
+  1 подписка в ядре · interaction/player.js ×2
 
 `Lampa.Player.listener` `external`
   e: data
-  1 подписка в ядре · interaction/player.js:1015, 1089, 1110, 1134
+  1 подписка в ядре · interaction/player.js ×4
 
 `Lampa.Player.listener` `infuse_build_url`
   e: callbacks, data, setUrl
-  0 подписок в ядре · interaction/player.js:887
+  0 подписок в ядре · interaction/player.js
 
 `Lampa.Player.listener` `ready`
   e: data
-  1 подписка в ядре · interaction/player.js:1274, 1315
+  1 подписка в ядре · interaction/player.js ×2
 
 `Lampa.Player.listener` `start`
   e: data
-  1 подписка в ядре · interaction/player.js:1221, 1297
+  1 подписка в ядре · interaction/player.js ×2
 
 ## Lampa.PlayerFooter.listener
 
 `Lampa.PlayerFooter.listener` `close`
   без payload
-  2 подписки в ядре · interaction/player/footer.js:57
+  2 подписки в ядре · interaction/player/footer.js
 
 `Lampa.PlayerFooter.listener` `open`
   без payload
-  2 подписки в ядре · interaction/player/footer.js:51
+  2 подписки в ядре · interaction/player/footer.js
 
 ## Lampa.PlayerInfo.listener
 
 `Lampa.PlayerInfo.listener` `stat`
   e: cache, data
-  1 подписка в ядре · interaction/player/info.js:130, 132, 136
+  1 подписка в ядре · interaction/player/info.js ×3
 
 ## Lampa.PlayerIPTV.listener
 
 `Lampa.PlayerIPTV.listener` `channel`
   e: channel, dir, position
-  1 подписка в ядре · interaction/player/iptv.js:66, 126
+  1 подписка в ядре · interaction/player/iptv.js ×2
 
 `Lampa.PlayerIPTV.listener` `draw-program`
   e: dir
-  1 подписка в ядре · interaction/player/iptv.js:114, 165
+  1 подписка в ядре · interaction/player/iptv.js ×2
 
 `Lampa.PlayerIPTV.listener` `play`
   e: channel, position
-  1 подписка в ядре · interaction/player/iptv.js:70, 91
+  1 подписка в ядре · interaction/player/iptv.js ×2
 
 ## Lampa.PlayerPanel.listener
 
 `Lampa.PlayerPanel.listener` `change_volume`
   e: volume
-  0 подписок в ядре · interaction/player/panel.js:192
+  0 подписок в ядре · interaction/player/panel.js
 
 `Lampa.PlayerPanel.listener` `flow`
   e: url
-  1 подписка в ядре · interaction/player/panel.js:266
+  1 подписка в ядре · interaction/player/panel.js
 
 `Lampa.PlayerPanel.listener` `fullscreen`
   без payload
-  1 подписка в ядре · interaction/player/panel.js:167
+  1 подписка в ядре · interaction/player/panel.js
 
 `Lampa.PlayerPanel.listener` `mouse_rewind`
   e: method, percent, time
-  1 подписка в ядре · interaction/player/panel.js:183, 187, 205
+  1 подписка в ядре · interaction/player/panel.js ×3
 
 `Lampa.PlayerPanel.listener` `next`
   без payload
-  1 подписка в ядре · interaction/player/panel.js:139
+  1 подписка в ядре · interaction/player/panel.js
 
 `Lampa.PlayerPanel.listener` `pip`
   без payload
-  1 подписка в ядре · interaction/player/panel.js:175
+  1 подписка в ядре · interaction/player/panel.js
 
 `Lampa.PlayerPanel.listener` `playlist`
   без payload
-  1 подписка в ядре · interaction/player/panel.js:155, 1203
+  1 подписка в ядре · interaction/player/panel.js ×2
 
 `Lampa.PlayerPanel.listener` `playpause`
   без payload
-  1 подписка в ядре · interaction/player/panel.js:135
+  1 подписка в ядре · interaction/player/panel.js
 
 `Lampa.PlayerPanel.listener` `prev`
   без payload
-  1 подписка в ядре · interaction/player/panel.js:143
+  1 подписка в ядре · interaction/player/panel.js
 
 `Lampa.PlayerPanel.listener` `quality`
   e: name, url
-  1 подписка в ядре · interaction/player/panel.js:321, 334
+  1 подписка в ядре · interaction/player/panel.js ×2
 
 `Lampa.PlayerPanel.listener` `rnext`
   без payload
-  1 подписка в ядре · interaction/player/panel.js:151, 1170
+  1 подписка в ядре · interaction/player/panel.js ×2
 
 `Lampa.PlayerPanel.listener` `rprev`
   без payload
-  1 подписка в ядре · interaction/player/panel.js:147, 1173
+  1 подписка в ядре · interaction/player/panel.js ×2
 
 `Lampa.PlayerPanel.listener` `share`
   без payload
-  1 подписка в ядре · interaction/player/panel.js:711
+  1 подписка в ядре · interaction/player/panel.js
 
 `Lampa.PlayerPanel.listener` `size`
   e: size
-  1 подписка в ядре · interaction/player/panel.js:1008
+  1 подписка в ядре · interaction/player/panel.js
 
 `Lampa.PlayerPanel.listener` `speed`
   e: speed
-  1 подписка в ядре · interaction/player/panel.js:1091
+  1 подписка в ядре · interaction/player/panel.js
 
 `Lampa.PlayerPanel.listener` `subsview`
   e: status
-  1 подписка в ядре · interaction/player/panel.js:435
+  1 подписка в ядре · interaction/player/panel.js
 
 `Lampa.PlayerPanel.listener` `to_end`
   без payload
-  1 подписка в ядре · interaction/player/panel.js:163
+  1 подписка в ядре · interaction/player/panel.js
 
 `Lampa.PlayerPanel.listener` `to_start`
   без payload
-  1 подписка в ядре · interaction/player/panel.js:159
+  1 подписка в ядре · interaction/player/panel.js
 
 `Lampa.PlayerPanel.listener` `visible`
   e: status
-  2 подписки в ядре · interaction/player/panel.js:1268
+  2 подписки в ядре · interaction/player/panel.js
 
 ## Lampa.PlayerPlaylist.listener
 
 `Lampa.PlayerPlaylist.listener` `select`
   e: item, playlist, position
-  1 подписка в ядре · interaction/player/playlist.js:27, 57, 72
+  1 подписка в ядре · interaction/player/playlist.js ×3
 
 `Lampa.PlayerPlaylist.listener` `set`
   e: playlist, position
-  2 подписки в ядре · interaction/player/playlist.js:101
+  2 подписки в ядре · interaction/player/playlist.js
 
 ## Lampa.PlayerVideo.listener
 
 `Lampa.PlayerVideo.listener` `canplay`
   без payload
-  1 подписка в ядре · interaction/player/video.js:299
+  1 подписка в ядре · interaction/player/video.js
 
 `Lampa.PlayerVideo.listener` `ended`
   без payload
-  1 подписка в ядре · interaction/player/video.js:242
+  1 подписка в ядре · interaction/player/video.js
 
 `Lampa.PlayerVideo.listener` `error`
   e: error, fatal
-  1 подписка в ядре · interaction/player/video.js:256, 259, 262, 1131 +1
+  1 подписка в ядре · interaction/player/video.js ×5
 
 `Lampa.PlayerVideo.listener` `levels`
   e: current, levels
-  1 подписка в ядре · interaction/player/video.js:738, 772, 1232
+  1 подписка в ядре · interaction/player/video.js ×3
 
 `Lampa.PlayerVideo.listener` `loadeddata`
   без payload
-  2 подписки в ядре · interaction/player/video.js:353
+  2 подписки в ядре · interaction/player/video.js
 
 `Lampa.PlayerVideo.listener` `pause`
   без payload
-  1 подписка в ядре · interaction/player/video.js:1324, 1341
+  1 подписка в ядре · interaction/player/video.js ×2
 
 `Lampa.PlayerVideo.listener` `play`
   без payload
-  1 подписка в ядре · interaction/player/video.js:1293, 1336
+  1 подписка в ядре · interaction/player/video.js ×2
 
 `Lampa.PlayerVideo.listener` `progress`
   e: down
-  1 подписка в ядре · interaction/player/video.js:270, 284
+  1 подписка в ядре · interaction/player/video.js ×2
 
 `Lampa.PlayerVideo.listener` `reset_continue`
   без payload
-  1 подписка в ядре · interaction/player/video.js:997
+  1 подписка в ядре · interaction/player/video.js
 
 `Lampa.PlayerVideo.listener` `rewind`
   без payload
-  1 подписка в ядре · interaction/player/video.js:1382
+  1 подписка в ядре · interaction/player/video.js
 
 `Lampa.PlayerVideo.listener` `subs`
   e: subs
-  1 подписка в ядре · interaction/player/video.js:697, 894, 1178
+  1 подписка в ядре · interaction/player/video.js ×3
 
 `Lampa.PlayerVideo.listener` `timeupdate`
   e: current, duration
-  2 подписки в ядре · interaction/player/video.js:304, 1381
+  2 подписки в ядре · interaction/player/video.js ×2
 
 `Lampa.PlayerVideo.listener` `tracks`
   e: tracks
-  1 подписка в ядре · interaction/player/video.js:668
+  1 подписка в ядре · interaction/player/video.js
 
 `Lampa.PlayerVideo.listener` `translate`
   e: translate, where
-  1 подписка в ядре · interaction/player/video.js:1211, 1212
+  1 подписка в ядре · interaction/player/video.js ×2
 
 `Lampa.PlayerVideo.listener` `videosize`
   e: height, width
-  1 подписка в ядре · interaction/player/video.js:306, 352
+  1 подписка в ядре · interaction/player/video.js ×2
 
 `Lampa.PlayerVideo.listener` `webos_subs`
   e: subs
-  1 подписка в ядре · interaction/player/webos.js:112, 258
+  1 подписка в ядре · interaction/player/webos.js ×2
 
 `Lampa.PlayerVideo.listener` `webos_tracks`
   e: tracks
-  1 подписка в ядре · interaction/player/webos.js:170, 253
+  1 подписка в ядре · interaction/player/webos.js ×2
 
 ## Lampa.Reguest.listener
 
 `Lampa.Reguest.listener` `after_complite`
   без payload
-  0 подписок в ядре · utils/reguest.js:75
+  0 подписок в ядре · utils/reguest.js
 
 `Lampa.Reguest.listener` `after_error`
   без payload
-  0 подписок в ядре · utils/reguest.js:84
+  0 подписок в ядре · utils/reguest.js
 
 `Lampa.Reguest.listener` `before_complite`
   без payload
-  0 подписок в ядре · utils/reguest.js:69
+  0 подписок в ядре · utils/reguest.js
 
 `Lampa.Reguest.listener` `before_error`
   без payload
-  0 подписок в ядре · utils/reguest.js:78
+  0 подписок в ядре · utils/reguest.js
 
 `Lampa.Reguest.listener` `end`
   без payload
-  0 подписок в ядре · utils/reguest.js:88, 163, 234
+  0 подписок в ядре · utils/reguest.js ×3
 
 `Lampa.Reguest.listener` `go`
   без payload
-  0 подписок в ядре · utils/reguest.js:484, 615
+  0 подписок в ядре · utils/reguest.js ×2
 
 `Lampa.Reguest.listener` `start`
   без payload
-  0 подписок в ядре · utils/reguest.js:66
+  0 подписок в ядре · utils/reguest.js
 
 ## Lampa.Screensaver.listener
 
 `Lampa.Screensaver.listener` `start`
   без payload
-  0 подписок в ядре · interaction/screensaver.js:93
+  0 подписок в ядре · interaction/screensaver.js
 
 `Lampa.Screensaver.listener` `stop`
   без payload
-  0 подписок в ядре · interaction/screensaver.js:143
+  0 подписок в ядре · interaction/screensaver.js
 
 `Lampa.Screensaver.listener` `toggle`
   e: status
-  0 подписок в ядре · interaction/screensaver.js:71
+  0 подписок в ядре · interaction/screensaver.js
 
 ## Lampa.Search.listener
 
 `Lampa.Search.listener` `close`
   без payload
-  0 подписок в ядре · interaction/search/global.js:211
+  0 подписок в ядре · interaction/search/global.js
 
 `Lampa.Search.listener` `open`
   без payload
-  0 подписок в ядре · interaction/search/global.js:45
+  0 подписок в ядре · interaction/search/global.js
 
 `Lampa.Search.listener` `sources`
   e: sources
-  0 подписок в ядре · interaction/search/global.js:96
+  0 подписок в ядре · interaction/search/global.js
 
 ## Lampa.Select.listener
 
 `Lampa.Select.listener` `close`
   e: active
-  0 подписок в ядре · interaction/select.js:219
+  0 подписок в ядре · interaction/select.js
 
 `Lampa.Select.listener` `fullshow`
   e: active, html
-  0 подписок в ядре · interaction/select.js:164
+  0 подписок в ядре · interaction/select.js
 
 `Lampa.Select.listener` `hide`
   e: active
-  0 подписок в ядре · interaction/select.js:205
+  0 подписок в ядре · interaction/select.js
 
 `Lampa.Select.listener` `preshow`
   e: active
-  0 подписок в ядре · interaction/select.js:152
+  0 подписок в ядре · interaction/select.js
 
 `Lampa.Select.listener` `toggle`
   e: active, html
-  0 подписок в ядре · interaction/select.js:181
+  0 подписок в ядре · interaction/select.js
 
 ## Lampa.Settings.listener
 
 `Lampa.Settings.listener` `close`
   без payload
-  0 подписок в ядре · interaction/settings/settings.js:80
+  0 подписок в ядре · interaction/settings/settings.js
 
 `Lampa.Settings.listener` `open`
   e: body, name, params
-  14 подписок в ядре · interaction/settings/settings.js:40, 113
+  14 подписок в ядре · interaction/settings/settings.js ×2
 
 ## Lampa.Socket.listener
 
 `Lampa.Socket.listener` `close`
   без payload
-  0 подписок в ядре · core/socket.js:83
+  0 подписок в ядре · core/socket.js
 
 `Lampa.Socket.listener` `message`
   e: result
-  4 подписки в ядре · core/socket.js:233
+  4 подписки в ядре · core/socket.js
 
 `Lampa.Socket.listener` `open`
   без payload
-  3 подписки в ядре · core/socket.js:73
+  3 подписки в ядре · core/socket.js
 
 ## Lampa.Storage.listener
 
 `Lampa.Storage.listener` `add`
   e: name, value
-  0 подписок в ядре · core/storage/storage.js:173
+  0 подписок в ядре · core/storage/storage.js
 
 `Lampa.Storage.listener` `change`
   e: name, value
-  16 подписок в ядре · core/storage/storage.js:151
+  16 подписок в ядре · core/storage/storage.js
 
 `Lampa.Storage.listener` `clear`
   e: full
-  1 подписка в ядре · core/storage/storage.js:278
+  1 подписка в ядре · core/storage/storage.js
 
 ## Lampa.Timeline.listener
 
 `Lampa.Timeline.listener` `read`
   e: data
-  0 подписок в ядре · interaction/timeline.js:27
+  0 подписок в ядре · interaction/timeline.js
 
 `Lampa.Timeline.listener` `update`
   e: data
-  0 подписок в ядре · interaction/timeline.js:101
+  0 подписок в ядре · interaction/timeline.js
 
 `Lampa.Timeline.listener` `view`
   e: data
-  0 подписок в ядре · interaction/timeline.js:139
+  0 подписок в ядре · interaction/timeline.js
 
 ## src/components/torrents/listener.js (не экспортируется)
 
 `src/components/torrents/listener.js (не экспортируется)` `open`
   e: e
-  0 подписок в ядре · components/torrents/listener.js:20
+  0 подписок в ядре · components/torrents/listener.js
 
 ## src/interaction/advert/preroll/v2.js (не экспортируется)
 
 `src/interaction/advert/preroll/v2.js (не экспортируется)` `ended`
   без payload
-  0 подписок в ядре · interaction/advert/preroll/v2.js:262
+  0 подписок в ядре · interaction/advert/preroll/v2.js
 
 `src/interaction/advert/preroll/v2.js (не экспортируется)` `error`
   без payload
-  0 подписок в ядре · interaction/advert/preroll/v2.js:310
+  0 подписок в ядре · interaction/advert/preroll/v2.js
 
 `src/interaction/advert/preroll/v2.js (не экспортируется)` `launch`
   без payload
-  0 подписок в ядре · interaction/advert/preroll/v2.js:106
+  0 подписок в ядре · interaction/advert/preroll/v2.js
 
 ## src/interaction/advert/preroll/v3.js (не экспортируется)
 
 `src/interaction/advert/preroll/v3.js (не экспортируется)` `ended`
   без payload
-  0 подписок в ядре · interaction/advert/preroll/v3.js:323
+  0 подписок в ядре · interaction/advert/preroll/v3.js
 
 `src/interaction/advert/preroll/v3.js (не экспортируется)` `error`
   без payload
-  0 подписок в ядре · interaction/advert/preroll/v3.js:341
+  0 подписок в ядре · interaction/advert/preroll/v3.js
 
 `src/interaction/advert/preroll/v3.js (не экспортируется)` `launch`
   без payload
-  0 подписок в ядре · interaction/advert/preroll/v3.js:74
+  0 подписок в ядре · interaction/advert/preroll/v3.js
 
 ## src/interaction/keyboard/keyboard.js (не экспортируется)
 
 `src/interaction/keyboard/keyboard.js (не экспортируется)` `back`
   без payload
-  0 подписок в ядре · interaction/keyboard/keyboard.js:572
+  0 подписок в ядре · interaction/keyboard/keyboard.js
 
 `src/interaction/keyboard/keyboard.js (не экспортируется)` `blur`
   без payload
-  0 подписок в ядре · interaction/keyboard/keyboard.js:123
+  0 подписок в ядре · interaction/keyboard/keyboard.js
 
 `src/interaction/keyboard/keyboard.js (не экспортируется)` `change`
   e: value
-  0 подписок в ядре · interaction/keyboard/keyboard.js:99, 112, 272, 463
+  0 подписок в ядре · interaction/keyboard/keyboard.js ×4
 
 `src/interaction/keyboard/keyboard.js (не экспортируется)` `down`
   без payload
-  0 подписок в ядре · interaction/keyboard/keyboard.js:166, 555
+  0 подписок в ядре · interaction/keyboard/keyboard.js ×2
 
 `src/interaction/keyboard/keyboard.js (не экспортируется)` `enter`
   без payload
-  0 подписок в ядре · interaction/keyboard/keyboard.js:87, 149, 230, 362
+  0 подписок в ядре · interaction/keyboard/keyboard.js ×4
 
 `src/interaction/keyboard/keyboard.js (не экспортируется)` `focus`
   без payload
-  0 подписок в ядре · interaction/keyboard/keyboard.js:131
+  0 подписок в ядре · interaction/keyboard/keyboard.js
 
 `src/interaction/keyboard/keyboard.js (не экспортируется)` `hover`
   e: button
-  0 подписок в ядре · interaction/keyboard/keyboard.js:480
+  0 подписок в ядре · interaction/keyboard/keyboard.js
 
 `src/interaction/keyboard/keyboard.js (не экспортируется)` `left`
   без payload
-  0 подписок в ядре · interaction/keyboard/keyboard.js:152, 561
+  0 подписок в ядре · interaction/keyboard/keyboard.js ×2
 
 `src/interaction/keyboard/keyboard.js (не экспортируется)` `right`
   без payload
-  0 подписок в ядре · interaction/keyboard/keyboard.js:159, 567
+  0 подписок в ядре · interaction/keyboard/keyboard.js ×2
 
 `src/interaction/keyboard/keyboard.js (не экспортируется)` `up`
   без payload
-  0 подписок в ядре · interaction/keyboard/keyboard.js:170, 549
+  0 подписок в ядре · interaction/keyboard/keyboard.js ×2
 
 ## src/interaction/player/orsay.js (не экспортируется)
 
 `src/interaction/player/orsay.js (не экспортируется)` `canplay`
   без payload
-  0 подписок в ядре · interaction/player/orsay.js:459
+  0 подписок в ядре · interaction/player/orsay.js
 
 `src/interaction/player/orsay.js (не экспортируется)` `ended`
   без payload
-  0 подписок в ядре · interaction/player/orsay.js:384
+  0 подписок в ядре · interaction/player/orsay.js
 
 `src/interaction/player/orsay.js (не экспортируется)` `error`
   e: error
-  0 подписок в ядре · interaction/player/orsay.js:44, 294, 296, 330 +14
+  0 подписок в ядре · interaction/player/orsay.js ×18
 
 `src/interaction/player/orsay.js (не экспортируется)` `loadeddata`
   без payload
-  0 подписок в ядре · interaction/player/orsay.js:396
+  0 подписок в ядре · interaction/player/orsay.js
 
 `src/interaction/player/orsay.js (не экспортируется)` `playing`
   без payload
-  0 подписок в ядре · interaction/player/orsay.js:409
+  0 подписок в ядре · interaction/player/orsay.js
 
 `src/interaction/player/orsay.js (не экспортируется)` `progress`
   e: percent
-  0 подписок в ядре · interaction/player/orsay.js:413
+  0 подписок в ядре · interaction/player/orsay.js
 
 `src/interaction/player/orsay.js (не экспортируется)` `subtitle`
   e: text
-  0 подписок в ядре · interaction/player/orsay.js:447
+  0 подписок в ядре · interaction/player/orsay.js
 
 `src/interaction/player/orsay.js (не экспортируется)` `timeupdate`
   без payload
-  0 подписок в ядре · interaction/player/orsay.js:418
+  0 подписок в ядре · interaction/player/orsay.js
 
 `src/interaction/player/orsay.js (не экспортируется)` `waiting`
   без payload
-  0 подписок в ядре · interaction/player/orsay.js:404
+  0 подписок в ядре · interaction/player/orsay.js
 
 ## src/interaction/player/segments.js (не экспортируется)
 
 `src/interaction/player/segments.js (не экспортируется)` `set`
   e: segments
-  1 подписка в ядре · interaction/player/segments.js:60, 315, 339
+  1 подписка в ядре · interaction/player/segments.js ×3
 
 `src/interaction/player/segments.js (не экспортируется)` `skip`
   e: skip
-  1 подписка в ядре · interaction/player/segments.js:22
+  1 подписка в ядре · interaction/player/segments.js
 
 ## src/interaction/player/subs.js (не экспортируется)
 
 `src/interaction/player/subs.js (не экспортируется)` `advanced`
   e: advanced
-  0 подписок в ядре · interaction/player/subs.js:150
+  0 подписок в ядре · interaction/player/subs.js
 
 `src/interaction/player/subs.js (не экспортируется)` `advanced-frame`
   e: cue, pseudo
-  0 подписок в ядре · interaction/player/subs.js:176, 180
+  0 подписок в ядре · interaction/player/subs.js ×2
 
 `src/interaction/player/subs.js (не экспортируется)` `ready`
   e: hasAdvanced
-  0 подписок в ядре · interaction/player/subs.js:153
+  0 подписок в ядре · interaction/player/subs.js
 
 `src/interaction/player/subs.js (не экспортируется)` `subtitle`
   e: payload
-  0 подписок в ядре · interaction/player/subs.js:196
+  0 подписок в ядре · interaction/player/subs.js
 
 ## src/interaction/player/tizen.js (не экспортируется)
 
 `src/interaction/player/tizen.js (не экспортируется)` `canplay`
   без payload
-  0 подписок в ядре · interaction/player/tizen.js:362
+  0 подписок в ядре · interaction/player/tizen.js
 
 `src/interaction/player/tizen.js (не экспортируется)` `ended`
   без payload
-  0 подписок в ядре · interaction/player/tizen.js:312
+  0 подписок в ядре · interaction/player/tizen.js
 
 `src/interaction/player/tizen.js (не экспортируется)` `error`
   e: error
-  0 подписок в ядре · interaction/player/tizen.js:34, 332, 368
+  0 подписок в ядре · interaction/player/tizen.js ×3
 
 `src/interaction/player/tizen.js (не экспортируется)` `loadeddata`
   без payload
-  0 подписок в ядре · interaction/player/tizen.js:366
+  0 подписок в ядре · interaction/player/tizen.js
 
 `src/interaction/player/tizen.js (не экспортируется)` `playing`
   без payload
-  0 подписок в ядре · interaction/player/tizen.js:307, 364
+  0 подписок в ядре · interaction/player/tizen.js ×2
 
 `src/interaction/player/tizen.js (не экспортируется)` `progress`
   e: percent
-  0 подписок в ядре · interaction/player/tizen.js:295, 301, 305
+  0 подписок в ядре · interaction/player/tizen.js ×3
 
 `src/interaction/player/tizen.js (не экспортируется)` `subtitle`
   e: text
-  0 подписок в ядре · interaction/player/tizen.js:340
+  0 подписок в ядре · interaction/player/tizen.js
 
 `src/interaction/player/tizen.js (не экспортируется)` `timeupdate`
   без payload
-  0 подписок в ядре · interaction/player/tizen.js:316
+  0 подписок в ядре · interaction/player/tizen.js
 
 `src/interaction/player/tizen.js (не экспортируется)` `waiting`
   без payload
-  0 подписок в ядре · interaction/player/tizen.js:297
+  0 подписок в ядре · interaction/player/tizen.js
 
 ## src/interaction/player/youtube.js (не экспортируется)
 
 `src/interaction/player/youtube.js (не экспортируется)` `canplay`
   без payload
-  0 подписок в ядре · interaction/player/youtube.js:120
+  0 подписок в ядре · interaction/player/youtube.js
 
 `src/interaction/player/youtube.js (не экспортируется)` `ended`
   без payload
-  0 подписок в ядре · interaction/player/youtube.js:159
+  0 подписок в ядре · interaction/player/youtube.js
 
 `src/interaction/player/youtube.js (не экспортируется)` `loadeddata`
   без payload
-  0 подписок в ядре · interaction/player/youtube.js:121
+  0 подписок в ядре · interaction/player/youtube.js
 
 `src/interaction/player/youtube.js (не экспортируется)` `playing`
   без payload
-  0 подписок в ядре · interaction/player/youtube.js:128, 144
+  0 подписок в ядре · interaction/player/youtube.js ×2
 
 `src/interaction/player/youtube.js (не экспортируется)` `timeupdate`
   без payload
-  0 подписок в ядре · interaction/player/youtube.js:125
+  0 подписок в ядре · interaction/player/youtube.js
 
 `src/interaction/player/youtube.js (не экспортируется)` `waiting`
   без payload
-  0 подписок в ядре · interaction/player/youtube.js:163
+  0 подписок в ядре · interaction/player/youtube.js
 
 ## src/interaction/search/history.js (не экспортируется)
 
 `src/interaction/search/history.js (не экспортируется)` `back`
   без payload
-  0 подписок в ядре · interaction/search/history.js:104
+  0 подписок в ядре · interaction/search/history.js
 
 `src/interaction/search/history.js (не экспортируется)` `down`
   без payload
-  0 подписок в ядре · interaction/search/history.js:98
+  0 подписок в ядре · interaction/search/history.js
 
 `src/interaction/search/history.js (не экспортируется)` `enter`
   e: value
-  0 подписок в ядре · interaction/search/history.js:43
+  0 подписок в ядре · interaction/search/history.js
 
 `src/interaction/search/history.js (не экспортируется)` `up`
   без payload
-  0 подписок в ядре · interaction/search/history.js:95
+  0 подписок в ядре · interaction/search/history.js
 
 ## src/interaction/search/results.js (не экспортируется)
 
 `src/interaction/search/results.js (не экспортируется)` `back`
   без payload
-  0 подписок в ядре · interaction/search/results.js:180, 233
+  0 подписок в ядре · interaction/search/results.js ×2
 
 `src/interaction/search/results.js (не экспортируется)` `clear`
   без payload
-  0 подписок в ядре · interaction/search/results.js:217
+  0 подписок в ядре · interaction/search/results.js
 
 `src/interaction/search/results.js (не экспортируется)` `finded`
   e: count, data
-  0 подписок в ядре · interaction/search/results.js:40, 90
+  0 подписок в ядре · interaction/search/results.js ×2
 
 `src/interaction/search/results.js (не экспортируется)` `select`
   без payload
-  0 подписок в ядре · interaction/search/results.js:145, 153, 157
+  0 подписок в ядре · interaction/search/results.js ×3
 
 `src/interaction/search/results.js (не экспортируется)` `start`
   без payload
-  0 подписок в ядре · interaction/search/results.js:49
+  0 подписок в ядре · interaction/search/results.js
 
 `src/interaction/search/results.js (не экспортируется)` `toggle`
   e: element
-  0 подписок в ядре · interaction/search/results.js:190, 204, 229
+  0 подписок в ядре · interaction/search/results.js ×3
 
 `src/interaction/search/results.js (не экспортируется)` `up`
   без payload
-  0 подписок в ядре · interaction/search/results.js:196
+  0 подписок в ядре · interaction/search/results.js
 
 ## src/interaction/search/sources.js (не экспортируется)
 
 `src/interaction/search/sources.js (не экспортируется)` `back`
   без payload
-  1 подписка в ядре · interaction/search/sources.js:175
+  1 подписка в ядре · interaction/search/sources.js
 
 `src/interaction/search/sources.js (не экспортируется)` `create`
   e: result, source
-  0 подписок в ядре · interaction/search/sources.js:149
+  0 подписок в ядре · interaction/search/sources.js
 
 `src/interaction/search/sources.js (не экспортируется)` `finded`
   e: count, data, result, source
-  1 подписка в ядре · interaction/search/sources.js:122
+  1 подписка в ядре · interaction/search/sources.js
 
 `src/interaction/search/sources.js (не экспортируется)` `search`
   e: immediately, query
-  0 подписок в ядре · interaction/search/sources.js:188
+  0 подписок в ядре · interaction/search/sources.js
 
 `src/interaction/search/sources.js (не экспортируется)` `toggle`
   e: element, result, source
-  1 подписка в ядре · interaction/search/sources.js:134
+  1 подписка в ядре · interaction/search/sources.js
 
 `src/interaction/search/sources.js (не экспортируется)` `up`
   без payload
-  1 подписка в ядре · interaction/search/sources.js:126, 163
+  1 подписка в ядре · interaction/search/sources.js ×2
 
