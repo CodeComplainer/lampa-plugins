@@ -48,31 +48,108 @@ const STARTUP_WAIT = 1000 * 30
  */
 const STEP_WAIT = 1000 * 60
 
+/** Больше серий — полоска сплошная: столько делений с дивана не различить */
+const SEGMENTS_MAX = 16
+
 /**
- * Цвета пометки — штатные, от класса `card__new-episode` ядра. Здесь только
- * место на постере и два своих состояния: финал и «раздачи ещё нет».
+ * Пометка стоит в нижнем углу, в одну строку с рейтингом (`card__vote`) и той
+ * же высоты: верх постера занят меткой «TV» и иконками, а вынос за край
+ * залезает на соседнюю карточку. Зелёный — штатный, от `card__new-episode`.
+ *
+ * Полоска сезона — по верхнему краю, над меткой и иконками, делениями как
+ * у историй в мессенджерах. Под постером ей не место: там рамка фокуса.
+ * Отступы от углов — чтобы не резалась скруглением постера.
+ *
+ * Flex без `gap`: его нет в Chrome 79.
  */
 const STYLE = `<style id="continue-fresh-style">
     .card__view .card__new-episode.cc-fresh{
-        bottom: 3em;
-        padding: 0 0.5em;
+        left: 0.3em;
+        right: auto;
+        bottom: 0.3em;
+        max-width: calc(100% - 5.6em);
+        text-align: left;
+        z-index: 1;
     }
     .card__view .cc-fresh > div{
-        padding: 0.3em 0.7em;
-        font-size: 0.8em;
-        font-weight: 600;
+        display: flex;
+        align-items: center;
+        padding: 0.45em 0.7em;
+        border-radius: 1em;
+        font-weight: 700;
         line-height: 1.2;
+        white-space: nowrap;
+        overflow: hidden;
+        box-shadow: 0 0.15em 0.5em rgba(0, 0, 0, 0.35);
+    }
+    .card__view .cc-fresh span{
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .card__view .cc-fresh svg{
+        width: 1.05em;
+        height: 1.05em;
+        margin-right: 0.35em;
+        flex-shrink: 0;
     }
     .card__view .cc-fresh--finale > div{
-        background: linear-gradient(90deg, #ffd000, #ff7a00);
-        color: #000;
+        background: linear-gradient(90deg, #ffd000, #ff9a00);
+        color: #2b1a00;
     }
-    .card__view .cc-fresh--nope{
-        opacity: 0.55;
+    .card__view .cc-fresh--wait > div{
+        background: rgba(0, 0, 0, 0.62);
+        color: #fff;
+    }
+    .card__view .cc-season{
+        position: absolute;
+        top: 0.2em;
+        left: 0.9em;
+        right: 0.9em;
+        height: 0.55em;
+        padding: 0.1em;
+        display: flex;
+        background: rgba(0, 0, 0, 0.5);
+        border-radius: 0.25em;
+        z-index: 1;
+    }
+    .card__view .cc-season > i{
+        flex: 1 1 0;
+        margin-left: 0.08em;
+        border-radius: 0.1em;
+        background: rgba(255, 255, 255, 0.18);
+    }
+    .card__view .cc-season > i:first-child{
+        margin-left: 0;
+    }
+    .card__view .cc-season--solid > i{
+        margin-left: 0;
+        border-radius: 0;
+    }
+    .card__view .cc-season > .cc-season__seen{
+        background: rgba(255, 255, 255, 0.5);
+    }
+    .card__view .cc-season > .cc-season__open{
+        background: #fff;
+    }
+    .card__view .cc-season > .cc-season__new{
+        background: #57f570;
+    }
+    .card__view .cc-season > .cc-season__finale{
+        background: #ffc400;
+    }
+    .card__view .cc-season > .cc-season__wait{
+        background: transparent;
+        box-shadow: inset 0 0 0 0.06em rgba(255, 255, 255, 0.85);
     }
 </style>`
 
-/** {t, items: {id: {s, e, n, f, air, ok}}} */
+/** Значки пометки: финал — флажок, «раздачи ещё нет» — часы */
+const ICONS = {
+    finale: '<svg viewBox="0 0 16 16"><path d="M3.5 1.5v13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/><path d="M4.5 2.2h8.6l-2.1 3.3 2.1 3.3H4.5z" fill="currentColor"/></svg>',
+    wait: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M8 4.6V8l2.4 1.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>'
+}
+
+/** {t, items: {id: {s, e, seen, aired, total, fresh, f, air, ok}}} — `fresh.check` */
 let state = {t: 0, items: {}}
 
 /** Решение и проверка раздачи — у continue, рядом с кнопкой */
@@ -206,7 +283,7 @@ function rowCards(media) {
     cards.forEach((card) => {
         let item = itemFor(card)
 
-        if (item?.ok === true) bump[card.id] = item
+        if (item?.fresh && item.ok === true) bump[card.id] = item
     })
 
     return fresh
@@ -258,7 +335,7 @@ function ids(cards) {
     return out
 }
 
-/** Новая серия сериала, если она есть и ещё не досмотрена */
+/** Что показать на постере сериала, если серию с пометки ещё не досмотрели */
 function itemFor(card) {
     let item = card?.original_name ? state.items[card.id] : null
 
@@ -382,6 +459,10 @@ function inspect(card, done) {
 
             if (!item) return done(null)
 
+            // Раздачу ищем только для нового: у старого сезона она давно есть,
+            // а трекеры не любят лишних запросов
+            if (!item.fresh) return done(item)
+
             deps.probe(live, decision, (ok) => {
                 item.ok = ok
 
@@ -485,36 +566,59 @@ function decorateAll() {
 }
 
 function decorate(node) {
-    let data = node.card_data
     let view = node.getElementsByClassName('card__view')[0]
 
     if (!view) return
 
-    let badge = view.getElementsByClassName('cc-fresh')[0]
-    let item = itemFor(data)
+    let item = itemFor(node.card_data)
+    let html = item ? badge(item) + season(item) : ''
 
-    if (!item) {
-        if (badge) badge.parentNode.removeChild(badge)
+    // Карточки перерисовываются часто, а пересчёт меняет немногое
+    if (view.cc_fresh === html) return
 
-        return
-    }
+    view.cc_fresh = html
 
-    let text = fresh.label(item, Lampa.Lang.translate)
+    let old = view.querySelectorAll('.cc-fresh, .cc-season')
 
-    if (item.ok === false) text += ' · ' + Lampa.Lang.translate('continue_not_yet_released')
+    for (let i = 0; i < old.length; i++) old[i].parentNode.removeChild(old[i])
 
-    if (!badge) {
-        badge = document.createElement('div')
-        badge.appendChild(document.createElement('div'))
+    if (html) view.insertAdjacentHTML('beforeend', html)
+}
 
-        view.appendChild(badge)
-    }
+/** Пометка — только когда что-то случилось: вышла новая серия */
+function badge(item) {
+    if (!item.fresh) return ''
 
-    badge.className =
-        'card__new-episode cc-fresh' +
-        (item.f ? ' cc-fresh--finale' : '') +
-        (item.ok === false ? ' cc-fresh--nope' : '')
-    badge.firstChild.textContent = text
+    let kind = item.ok === false ? 'wait' : item.f ? 'finale' : 'new'
+
+    return (
+        '<div class="card__new-episode cc-fresh cc-fresh--' +
+        kind +
+        '"><div>' +
+        (ICONS[kind] || '') +
+        '<span>' +
+        fresh.label(item, Lampa.Lang.translate) +
+        '</span></div></div>'
+    )
+}
+
+/** Полоска сезона: деление на серию, у длинного сезона — сплошные зоны */
+function season(item) {
+    let solid = item.total > SEGMENTS_MAX
+    let cells = ''
+
+    fresh.zones(item).forEach((zone) => {
+        let cell =
+            '<i class="cc-season__' +
+            zone.kind +
+            '"' +
+            (solid ? ' style="flex-grow:' + zone.count + '"' : '') +
+            '></i>'
+
+        for (let i = 0; i < (solid ? 1 : zone.count); i++) cells += cell
+    })
+
+    return '<div class="cc-season' + (solid ? ' cc-season--solid' : '') + '">' + cells + '</div>'
 }
 
 export default {init, refresh}
