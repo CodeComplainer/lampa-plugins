@@ -54,13 +54,8 @@ const STEP_WAIT = 1000 * 60
  */
 const STYLE = `<style id="continue-fresh-style">
     .card__view .card__new-episode.cc-fresh{
-        left: auto;
-        bottom: auto;
-        right: -0.8em;
-        top: 1.4em;
-        max-width: 85%;
-        text-align: right;
-        z-index: 1;
+        bottom: 3em;
+        padding: 0 0.5em;
     }
     .card__view .cc-fresh > div{
         padding: 0.3em 0.7em;
@@ -157,7 +152,7 @@ function read() {
 function takeOver() {
     if (Lampa.Storage.get(keys.KEYS.row, false)) return
 
-    Lampa.Storage.set(NATIVE_ROW, false)
+    Lampa.Storage.set(NATIVE_ROW, 'false')
     Lampa.Storage.set(keys.KEYS.row, true)
 
     console.log('Continue', 'native row replaced:', NATIVE_ROW)
