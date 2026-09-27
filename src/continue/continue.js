@@ -461,7 +461,13 @@ function evaluator(card, decision, extra) {
             extra
         )
 
-        return pick.pick(results, pick.context(card, filter, params))
+        let ctx = pick.context(card, filter, params)
+
+        // Вход последнего отбора — ровно то, что нужно, чтобы сохранить неудачный
+        // выбор в архив раздач и прогонять по нему алгоритм (tools/case.js).
+        window.__continue.last = {ctx: ctx, query: query, results: results}
+
+        return pick.pick(results, ctx)
     }
 }
 
