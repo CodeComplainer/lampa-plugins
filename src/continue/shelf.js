@@ -157,8 +157,11 @@ const ICONS = {
     wait: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M8 4.6V8l2.4 1.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>'
 }
 
-/** {v, t, items: {id: {s, e, seen, aired, total, fresh, f, air, ok}}} — `fresh.check` */
-let state = {t: 0, items: {}}
+/**
+ * {v, t, items: {id: {s, e, seen, aired, total, fresh, f, air, ok}}, place: {id: 'hide'|'wait'}}
+ * items — `fresh.check`, place — место в «Продолжить просмотр» (`fresh.place`)
+ */
+let state = {t: 0, items: {}, place: {}}
 
 /** Решение и проверка раздачи — у continue, рядом с кнопкой */
 let deps = null
@@ -225,7 +228,10 @@ function tick() {
 function read() {
     let saved = Lampa.Storage.get(keys.KEYS.fresh, '{}')
 
-    if (!saved || typeof saved !== 'object' || !saved.items || saved.v !== FORMAT) return {t: 0, items: {}}
+    if (!saved || typeof saved !== 'object' || !saved.items || saved.v !== FORMAT)
+        return {t: 0, items: {}, place: {}}
+
+    saved.place = saved.place || {}
 
     return saved
 }
@@ -282,20 +288,28 @@ function addRow() {
 function rowCards(media) {
     let viewed = ids(Lampa.Favorite.get({type: 'viewed'}))
     let thrown = ids(Lampa.Favorite.get({type: 'thrown'}))
+    // Продолжать нечего — сериалу не место в ряду (`fresh.place`)
     let cards = Lampa.Favorite.get({type: 'history'}).filter(
-        (card) => card && !viewed[card.id] && !thrown[card.id] && inSection(card, media)
+        (card) =>
+            card &&
+            !viewed[card.id] &&
+            !thrown[card.id] &&
+            !(card.original_name && state.place[card.id] === 'hide') &&
+            inSection(card, media)
     )
 
     let bump = {}
+    let waiting = {}
 
     cards.forEach((card) => {
         let item = itemFor(card)
 
         if (item?.fresh && item.ok === true) bump[card.id] = item
+        if (card.original_name && state.place[card.id] === 'wait') waiting[card.id] = true
     })
 
     return fresh
-        .arrange(cards, Lampa.Storage.get(keys.KEYS.played, {}) || {}, bump)
+        .arrange(cards, Lampa.Storage.get(keys.KEYS.played, {}) || {}, bump, waiting)
         .slice(0, ROW_SIZE)
         .map((card) => Lampa.Arrays.clone(card))
 }
@@ -372,6 +386,7 @@ function refresh() {
 
     let list = candidates()
     let items = {}
+    let place = {}
     let i = 0
 
     next()
@@ -391,7 +406,7 @@ function refresh() {
             step(null)
         }
 
-        function step(item) {
+        function step(item, where) {
             if (over) return
 
             over = true
@@ -399,13 +414,18 @@ function refresh() {
             clearTimeout(timer)
 
             if (item) items[card.id] = item
+            if (where) place[card.id] = where
+
+            // Полный проход идёт минутами: показываем каждый сериал, как только
+            // он готов, а не всех разом в конце
+            apply(card.id, item, where)
 
             next()
         }
     }
 
     function finish() {
-        state = {v: FORMAT, t: Date.now(), items: items}
+        state = {v: FORMAT, t: Date.now(), items: items, place: place}
         has_items = Object.keys(items).length > 0
 
         Lampa.Storage.set(keys.KEYS.fresh, state)
@@ -428,19 +448,27 @@ function recheck() {
     if (busy || !card || card.id !== last?.id) return
 
     try {
-        inspect(card, (item) => {
-            if (item) state.items[card.id] = item
-            else delete state.items[card.id]
-
-            has_items = Object.keys(state.items).length > 0
+        inspect(card, (item, where) => {
+            apply(card.id, item, where)
 
             Lampa.Storage.set(keys.KEYS.fresh, state)
-
-            decorateAll()
         })
     } catch (err) {
         console.error('Continue', 'fresh error:', card.id, err)
     }
+}
+
+/** Итог по одному сериалу — сразу на постеры */
+function apply(id, item, where) {
+    if (item) state.items[id] = item
+    else delete state.items[id]
+
+    if (where) state.place[id] = where
+    else delete state.place[id]
+
+    has_items = Object.keys(state.items).length > 0
+
+    decorateAll()
 }
 
 /**
@@ -464,17 +492,16 @@ function inspect(card, done) {
 
         deps.describe(live, (decision, list) => {
             let item = list ? fresh.check(decision, list, info) : null
-
-            if (!item) return done(null)
+            if (!item) return done(null, list ? fresh.place(decision, list, null) : null)
 
             // Раздачу ищем только для нового: у старого сезона она давно есть,
             // а трекеры не любят лишних запросов
-            if (!item.fresh) return done(item)
+            if (!item.fresh) return done(item, fresh.place(decision, list, item))
 
             deps.probe(live, decision, (ok) => {
                 item.ok = ok
 
-                done(item)
+                done(item, fresh.place(decision, list, item))
             })
         })
     })
