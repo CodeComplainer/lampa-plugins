@@ -3,8 +3,10 @@ import store from '../memory/store'
 import titles from '../memory/titles'
 import parse from './parse'
 import pick from './pick'
+import fresh from './fresh'
 import resume from './resume'
 import run from './run'
+import shelf from './shelf'
 import studio from './studio'
 import voice from './voice'
 
@@ -110,6 +112,9 @@ function startPlugin() {
     })
 
     followNative()
+
+    // Новые серии: порядок «Продолжить просмотр» и пометки на постерах
+    shelf.init({describe: describe, probe: probeFresh})
 }
 
 /**
@@ -219,6 +224,9 @@ function show(card, root, decision) {
     draw(root, where)
 
     probeFresh(card, decision, (available) => {
+        // не проверяли — подпись уже верная
+        if (available === null) return
+
         // Серия вышла по календарю, но раздачи с ней ещё нет. Приглушаем
         // иконку, чтобы это читалось без наведения, а подпись объясняет
         // причину, когда кнопка в фокусе.
@@ -263,10 +271,14 @@ const PROBE_TTL_OK = 1000 * 60 * 60 * 12
  * которой нет. Граница проходит не по дате, а по смыслу: раздачи прошлых
  * сезонов уже собраны целиком, а текущий ещё догоняет эфир. Результат
  * кешируется, поэтому повторные заходы обходятся без запроса.
+ *
+ * Отвечает всегда: true — есть, false — нет, null — не проверяли или поиск
+ * не ответил. Ряд «Новые серии» проверяет сериалы по очереди и без ответа
+ * встал бы.
  */
 function probeFresh(card, decision, done) {
-    if (decision.mode === 'waiting' || decision.mode === 'restart') return
-    if (!decision.episode || !isSeries(card)) return
+    if (decision.mode === 'waiting' || decision.mode === 'restart') return done(null)
+    if (!decision.episode || !isSeries(card)) return done(null)
 
     // Кеш смотрим для любой серии: его пишет и нажатие на кнопку, и если оно
     // ничего не нашло, подпись должна это отражать.
@@ -275,8 +287,8 @@ function probeFresh(card, decision, done) {
 
     if (cached && Date.now() - cached.t < (cached.ok ? PROBE_TTL_OK : PROBE_TTL)) return done(cached.ok)
 
-    if (decision.mode !== 'next' && decision.mode !== 'first') return
-    if (!decision.airing) return
+    if (decision.mode !== 'next' && decision.mode !== 'first') return done(null)
+    if (!decision.airing) return done(null)
 
     search(
         card,
@@ -288,7 +300,7 @@ function probeFresh(card, decision, done) {
 
             done(ok)
         },
-        () => {}
+        () => done(null)
     )
 }
 
@@ -341,7 +353,7 @@ function describe(card, done) {
             decision.airing = !target || (!!last && decision.season === last.season_number)
         }
 
-        done(decision)
+        done(decision, list)
     })
 }
 
@@ -384,7 +396,8 @@ function episodes(card, done) {
                 out.push({
                     season_number: ep.season_number || number,
                     episode_number: ep.episode_number,
-                    air_date: ep.air_date || null
+                    air_date: ep.air_date || null,
+                    episode_type: ep.episode_type || null
                 })
             })
         })
@@ -652,6 +665,8 @@ function rememberRelease(card, cand, query) {
     memory.query(card, query)
 
     countVoice(cand)
+
+    shelf.played(card)
 }
 
 /**
@@ -1084,6 +1099,16 @@ Lampa.Lang.add({
         en: 'No video file in the release',
         uk: 'У роздачі не знайдено відеофайл'
     },
+    continue_fresh_season_finale: {
+        ru: 'Финал сезона',
+        en: 'Season finale',
+        uk: 'Фінал сезону'
+    },
+    continue_fresh_series_finale: {
+        ru: 'Финал сериала',
+        en: 'Series finale',
+        uk: 'Фінал серіалу'
+    },
     continue_error_timeout: {
         ru: 'Раздача не отвечает, попробуйте другую',
         en: 'The release is not responding, try another',
@@ -1099,6 +1124,6 @@ else {
 }
 
 // доступ для отладки: позволяет прогонять парсер и отбор на живой выдаче из консоли
-window.__continue = {parse, pick, resume, run}
+window.__continue = {parse, pick, resume, run, fresh, shelf}
 
 export default {parse, pick, resume, run}
