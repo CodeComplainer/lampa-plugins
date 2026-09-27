@@ -104,13 +104,12 @@ function check(decision, list, show, now) {
  *   S2E10 · Финал сезона
  */
 function label(item, translate) {
-    let t = translate || ((key) => key)
     let text = 'S' + item.s + 'E' + item.e
 
     if (item.n > 1) text += ' +' + (item.n - 1)
 
-    if (item.f === 'series') text += ' · ' + t('continue_fresh_series_finale')
-    else if (item.f === 'season') text += ' · ' + t('continue_fresh_season_finale')
+    // continue_fresh_season_finale или continue_fresh_series_finale
+    if (item.f) text += ' · ' + translate('continue_fresh_' + item.f + '_finale')
 
     return text
 }

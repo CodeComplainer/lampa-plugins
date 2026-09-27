@@ -665,8 +665,6 @@ function rememberRelease(card, cand, query) {
     memory.query(card, query)
 
     countVoice(cand)
-
-    shelf.played(card)
 }
 
 /**
