@@ -17,8 +17,22 @@ const RESOLUTION_TIER = {
     480: 1
 }
 
-/** Порядок ослабления фильтров, когда после отсечек не осталось никого */
-const RELAX_ORDER = ['voice', 'dv', 'hdr', 'sub', 'quality']
+/**
+ * Сколько раздающих нужно, чтобы раздача реально играла.
+ *
+ * Мёртвые (ноль) отсекаются всегда, но и один-два раздающих на стриминге
+ * почти всегда означают вечную буферизацию: торрент поднимается, а серия не
+ * идёт. Поэтому слабые отсекаются как любой другой фильтр — и так же
+ * возвращаются последним ослаблением, когда больше играть нечего.
+ */
+const MIN_SEEDERS = 5
+
+/**
+ * Порядок ослабления фильтров, когда после отсечек не осталось никого.
+ * Слабые раздачи — последними: предпочтения можно нарушить, а раздача,
+ * которая не играет, не нужна ни с какой озвучкой.
+ */
+const RELAX_ORDER = ['voice', 'dv', 'hdr', 'sub', 'quality', 'seeders']
 
 /** Разрешения фильтра Lampa в числа */
 const FILTER_QUALITY = {
@@ -50,7 +64,8 @@ function normalize(result) {
         seeders: parseInt(result.Seeders, 10) || 0,
         size: parseInt(result.Size, 10) || 0,
         viewed: !!result.viewed,
-        parsed: parsed
+        parsed: parsed,
+        key: releaseKey(result, parsed)
     }
 }
 
@@ -101,6 +116,8 @@ function hardFilter(list, ctx, relax) {
         // мёртвая раздача бесполезна, каким бы ни было качество
         if (!cand.seeders) return false
 
+        if (relax.indexOf('seeders') === -1 && cand.seeders < MIN_SEEDERS) return false
+
         if (!isSameTitle(cand, ctx)) return false
 
         if (ctx.no_cam && p.is_cam) return false
@@ -110,7 +127,7 @@ function hardFilter(list, ctx, relax) {
 
         // Как и нужная серия. Раздача «серии 1-2», когда нужна четвёртая,
         // бесполезна — предлагать её незачем.
-        if (ctx.episode && p.episodes && !hasEpisode(cand, ctx)) return false
+        if (ctx.episode && !hasEpisode(cand, ctx)) return false
 
         if (relax.indexOf('quality') === -1 && ctx.max_resolution && p.resolution) {
             if (p.resolution > ctx.max_resolution) return false
@@ -179,11 +196,18 @@ function score(cand, ctx) {
     return s
 }
 
-/** Раздача содержит нужную серию */
+/**
+ * Раздача содержит нужную серию — насколько об этом говорит заголовок.
+ * Диапазона серий нет («Сезон 2») — обычно это целый сезон, и серия в нём есть.
+ */
 function hasEpisode(cand, ctx) {
-    if (!ctx.episode || !cand.parsed.episodes) return false
+    let range = cand.parsed.episodes
 
-    return ctx.episode >= cand.parsed.episodes[0] && ctx.episode <= cand.parsed.episodes[1]
+    if (!ctx.episode) return false
+
+    if (!range) return true
+
+    return ctx.episode >= range[0] && ctx.episode <= range[1]
 }
 
 /**
@@ -202,14 +226,46 @@ function sameRelease(list, ctx) {
 /**
  * Та самая раздача, которую запускали по этому тайтлу в прошлый раз.
  *
- * Опознаём по хешу из выдачи парсера — на нём же держится вся штатная механика
- * пометок. Не все трекеры его отдают; тогда сравнивать нечего, и работает
- * обычный подбор.
+ * Хеша из выдачи парсера мало: это хеш **заголовка**, а не торрента
+ * ([parser.js:318](src/core/api/sources/parser.js:318)). У выходящего сериала
+ * заголовок раздачи меняется с каждой новой серией — «Серии 1-5 из 10»
+ * становится «Серии 1-6 из 10», — и хеш вместе с ним. Раздача та же, а
+ * опознать её было нельзя: continue уходил на другую ровно тогда, когда
+ * продолжать было нужнее всего. Поэтому рядом с хешем помним и ключ раздачи,
+ * который обновление переживает (см. releaseKey).
  */
 function isSameRelease(cand, ctx) {
-    if (!ctx.last || !ctx.last.hash) return false
+    let last = ctx.last
 
-    return !!cand.raw.hash && cand.raw.hash === ctx.last.hash
+    if (!last) return false
+
+    if (last.hash && cand.raw.hash && cand.raw.hash === last.hash) return true
+
+    return !!last.key && cand.key === last.key
+}
+
+/**
+ * Ключ раздачи, переживающий её обновление.
+ *
+ * Лучше всего — адрес темы на трекере (`Details` у Jackett и JacRed): он не
+ * меняется, сколько серий ни добавь. Где его нет, берём трекер, сезон и
+ * заголовок без номеров серий: всё остальное в заголовке — название, качество,
+ * студии — у обновлённой раздачи прежнее.
+ *
+ * @param {Object} raw - результат поиска в том виде, в каком его отдаёт Lampa.Parser
+ * @param {Object} parsed - его разбор (parse)
+ * @returns {string|null}
+ */
+function releaseKey(raw, parsed) {
+    if (raw.Details) return 'd:' + raw.Details
+
+    if (!parsed.stem) return null
+
+    // Сезон входит в ключ явно: в «S02E01-05» он живёт внутри записи серий
+    // и уходит вместе с ней.
+    return (
+        't:' + ((raw.Tracker || '') + '').toLowerCase() + '|' + parsed.seasons.join(',') + '|' + parsed.stem
+    )
 }
 
 /**
@@ -297,7 +353,7 @@ function emptyReason(all, ctx) {
  * пользователь задал сам: перевод или качество.
  */
 function isConfident(relax) {
-    return relax.indexOf('voice') === -1 && relax.indexOf('quality') === -1
+    return relax.indexOf('voice') === -1 && relax.indexOf('quality') === -1 && relax.indexOf('seeders') === -1
 }
 
 /**

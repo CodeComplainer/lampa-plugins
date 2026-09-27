@@ -72,7 +72,7 @@
     function describe(track) {
       if (!track) return null;
       var lang = language$1(track.language || track.lang || '');
-      var label = clean(track.label || track.name || '');
+      var label = clean$1(track.label || track.name || '');
       if (!lang && !label) return null;
       return {
         lang: lang,
@@ -125,7 +125,7 @@
       tur: 'tr'
     };
     function language$1(value) {
-      var lang = clean(value);
+      var lang = clean$1(value);
       return LANGS[lang] || lang;
     }
 
@@ -275,7 +275,7 @@
     function matchSub(subs, saved) {
       return match(realSubs(subs), saved);
     }
-    function clean(value) {
+    function clean$1(value) {
       return ((value || '') + '').toLowerCase().trim();
     }
     var match$1 = {
@@ -289,6 +289,125 @@
       applySub: applySub,
       matchSub: matchSub,
       realSubs: realSubs
+    };
+
+    /**
+     * Названия, по которым имеет смысл искать раздачи.
+     *
+     * Название карточки и трекерное название совпадают далеко не всегда: корейский
+     * сериал «Суперчудаки» (원더풀스) лежит на трекерах как «Суперглупцы», и ни одно
+     * из двух названий карточки не находит ничего. Поэтому поиск идёт каскадом:
+     * привычное название, затем альтернативные из TMDB.
+     */
+
+    /**
+     * Признак `clarification` важнее, чем кажется: без него поиск дополнительно
+     * фильтруется по названиям самой карточки ([parser.js:302](src/core/api/sources/parser.js:302)),
+     * и чужое название гарантированно даёт пустую выдачу. Проверено на живых
+     * данных: «Суперглупцы» без него — 0 раздач, с ним — 4.
+     */
+    function candidates(card, opts) {
+      opts = opts || {};
+      var out = [];
+      var seen = {};
+      function push(query, clarification) {
+        query = clean(query);
+        if (!query) return;
+        var low = query.toLowerCase();
+        if (seen[low]) return;
+        seen[low] = true;
+        out.push({
+          query: query,
+          clarification: !!clarification
+        });
+      }
+
+      // Название, которым раздача нашлась в прошлый раз, — самое надёжное:
+      // человек уже смотрел этот тайтл именно по нему.
+      push(opts.remembered, true);
+      push(primary(card, opts.parse_lang), false);
+      push(title(card), false);
+      push(original(card), false);
+      alternatives(card, opts.lang).forEach(function (name) {
+        push(name, true);
+      });
+      return out;
+    }
+
+    /**
+     * Запрос, который строит штатная кнопка торрентов
+     * ([full/start/torrents.js:14](src/components/full/start/torrents.js:14)).
+     *
+     * Повторяем её точь-в-точь: если человек привык, что обычный список раздач
+     * что-то находит, кнопка «Смотреть» обязана находить то же самое.
+     */
+    function primary(card, parse_lang) {
+      var lg = title(card);
+      var df = original(card);
+      var year = yearOf(card);
+      var combinations = {
+        df: df,
+        df_year: df + ' ' + year,
+        df_lg: df + ' ' + lg,
+        df_lg_year: df + ' ' + lg + ' ' + year,
+        lg: lg,
+        lg_year: lg + ' ' + year,
+        lg_df: lg + ' ' + df,
+        lg_df_year: lg + ' ' + df + ' ' + year
+      };
+      return combinations[parse_lang || 'df'] || df || lg;
+    }
+
+    /**
+     * Стоит ли запоминать название.
+     *
+     * То, что и так строится из карточки, хранить незачем: место в памяти
+     * ограничено, и занимать его очевидным — значит вытеснять полезное.
+     */
+    function worth(card, query, parse_lang) {
+      return !!clean(query) && clean(query) !== primary(card, parse_lang);
+    }
+
+    /**
+     * Альтернативные названия из TMDB.
+     *
+     * Форма ответа зависит от типа: у сериалов это `results`, у фильмов `titles`.
+     * Штатный список уточнения читает только `titles`
+     * ([filter.js:76](src/interaction/filter.js:76)), поэтому для сериалов он
+     * альтернативных названий не показывает вовсе — приходится доставать самим.
+     *
+     * Свой язык идёт раньше английского: русские раздачи чаще подписаны русским
+     * альтернативным названием.
+     */
+    function alternatives(card, lang) {
+      var block = card && card.alternative_titles;
+      if (!block) return [];
+      var list = block.results || block.titles || [];
+      var own = [];
+      var english = [];
+      list.forEach(function (item) {
+        var code = ((item.iso_3166_1 || '') + '').toLowerCase();
+        if (lang && code === lang) own.push(item.title);else if (code === 'us') english.push(item.title);
+      });
+      return own.concat(english);
+    }
+    function title(card) {
+      return clean(card && (card.title || card.name) || '');
+    }
+    function original(card) {
+      return clean(card && (card.original_title || card.original_name) || '');
+    }
+    function yearOf(card) {
+      return ((card && (card.first_air_date || card.release_date) || '0000') + '').slice(0, 4);
+    }
+    function clean(value) {
+      return ((value || '') + '').trim();
+    }
+    var titles = {
+      candidates: candidates,
+      primary: primary,
+      alternatives: alternatives,
+      worth: worth
     };
 
     /**
@@ -353,9 +472,12 @@
       /**
        * @returns {{q: string, v: string, r: number, a: {l: string, n: string}, t: number}|null}
        *
-       * q — название, по которому нашлись раздачи
+       * q — название, по которому нашлись раздачи; пустая строка — «ищем по
+       *     названию карточки», запомненное прежде оказалось лишним
        * v — студия озвучки
        * r — разрешение
+       * h — хеш заголовка запущенной раздачи
+       * d — ключ той же раздачи, переживающий её обновление (новые серии)
        * a — аудиодорожка: язык и название
        * t — когда запись трогали в последний раз
        */
@@ -384,45 +506,81 @@
       }
 
       /**
-       * Продублировать рабочее название в штатный список уточнения.
+       * Поправить свою карточку в штатном списке уточнения.
        *
        * Ключ `user_clarifys` синхронизируется через CUB и читается обычным экраном
-       * торрентов ([filter.js:36](src/interaction/filter.js:36)), поэтому название
-       * всплывает первым и на другом устройстве — короче становится и нативный путь,
-       * а не только наша кнопка.
+       * торрентов ([filter.js:36](src/interaction/filter.js:36)), поэтому рабочее
+       * название всплывает первым и на другом устройстве — короче становится и
+       * нативный путь, а не только наша кнопка. Свою карточку заодно подрезаем:
+       * штатный код дописывает туда запросы вообще без ограничения.
        *
-       * Свою карточку заодно подрезаем: штатный код дописывает туда запросы
-       * вообще без ограничения.
+       * @param {Function} edit - (list) => новый список
        */
-      function clarify(card, query, keep) {
-        if (!card || !card.id || !query) return;
+      function clarifys(card, edit) {
         var all = storage.get('user_clarifys', '{}') || {};
-        var list = (all[card.id] || []).filter(function (item) {
-          return item !== query;
-        });
-        list.push(query);
-        all[card.id] = list.slice(-(keep || CLARIFY_KEEP));
+        var list = all[card.id] || [];
+        all[card.id] = edit(list).slice(-CLARIFY_KEEP);
         storage.set('user_clarifys', all);
       }
 
       /**
-       * Последнее название, которое человек вводил руками на экране торрентов.
+       * Название, по которому нашлась запущенная раздача.
        *
-       * Своей записи может не быть: в память название попадает по факту запуска
-       * файла, а уточнить поиск и уйти, ничего не включив, — обычное дело.
-       * Штатный список при этом уже всё запомнил, и не воспользоваться этим
-       * значит заставить человека уточнять поиск заново.
+       * Нестандартное запоминаем и ставим последним в штатный список уточнения.
+       * Если нашлось по обычному названию карточки, прежнее запомненное стираем —
+       * и из списка тоже, — а в `q` пишем пустую строку: «ищем по названию
+       * карточки». Иначе устаревшее название стояло бы первым в каждом следующем
+       * поиске, хотя человек давно ищет иначе.
        */
-      function lastClarify(card) {
+      function query(card, value) {
+        if (!card || !card.id || !value) return;
+        if (titles.worth(card, value, storage.field('parse_lang'))) {
+          set(card, {
+            q: value
+          });
+          clarifys(card, function (list) {
+            return list.filter(function (item) {
+              return item !== value;
+            }).concat(value);
+          });
+          return;
+        }
+        var rec = get(card);
+        if (!rec || !rec.q) return;
+        var stale = rec.q;
+        clarifys(card, function (list) {
+          return list.filter(function (item) {
+            return item !== stale;
+          });
+        });
+        set(card, {
+          q: ''
+        });
+      }
+
+      /**
+       * По какому названию искать эту карточку, если не по её собственному.
+       *
+       * Запомненное по факту запуска — первым. Своей записи может не быть: уточнить
+       * поиск и уйти, ничего не включив, — обычное дело, а штатный список при этом
+       * уже всё запомнил, и не воспользоваться этим значит заставить человека
+       * уточнять заново. Пустое `q` — прошлый запуск нашёлся по названию карточки,
+       * и старые уточнения тут не к месту.
+       *
+       * @returns {string|null}
+       */
+      function searchName(card) {
         if (!card || !card.id) return null;
+        var rec = get(card);
+        if (rec && typeof rec.q === 'string') return rec.q || null;
         var list = (storage.get('user_clarifys', '{}') || {})[card.id] || [];
         return list[list.length - 1] || null;
       }
       return {
         get: get,
         set: set,
-        clarify: clarify,
-        lastClarify: lastClarify,
+        query: query,
+        searchName: searchName,
         cardID: cardID,
         KEY: KEY,
         LIMIT: LIMIT

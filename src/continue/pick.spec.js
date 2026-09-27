@@ -527,3 +527,114 @@ suite('Уже просмотренная раздача', () => {
         expect(out.list[0].parsed.is_cam).toBe(false)
     })
 })
+
+/**
+ * Хеш из выдачи парсера — хеш заголовка, а заголовок выходящего сериала
+ * меняется с каждой новой серией. Раздача та же, хеш другой.
+ */
+suite('Обновлённая раздача', () => {
+    /** Ключ раздачи в том виде, в каком его считает отбор */
+    function key(raw) {
+        return pick.normalize(Object.assign({Seeders: 10}, raw)).key
+    }
+
+    const LAST = {
+        season: 2,
+        episode: 6,
+        last: {
+            hash: 'old-title-hash',
+            key: key({Title: 'Series Name S02E01-05 of 10 1080p WEB-DL', Tracker: 'rutor'})
+        }
+    }
+
+    test('новая серия в заголовке не мешает узнать свою раздачу', () => {
+        let results = [
+            row('Series Name S02E01-06 of 10 2160p WEB-DL', 200, {hash: 'x1', Tracker: 'rutor'}),
+            row('Series Name S02E01-06 of 10 1080p WEB-DL', 40, {hash: 'new-title-hash', Tracker: 'rutor'})
+        ]
+
+        let out = pick.pick(results, pick.context(SERIES, {}, LAST))
+
+        expect(out.list[0].raw.hash).toBe('new-title-hash')
+        expect(out.continues).toBe(true)
+    })
+
+    test('адрес темы надёжнее заголовка', () => {
+        let a = key({Title: 'Сериал / Series Name [S02, 1-5 из 10]', Details: 'https://t/1'})
+        let b = key({Title: 'Сериал / Series Name [S02, 1-6 из 10]', Details: 'https://t/1'})
+
+        expect(a).toBe(b)
+    })
+
+    test('русские подписи серий тоже не входят в ключ', () => {
+        let a = key({
+            Title: 'Сериал / Series Name / Сезон 2 / Серии 1-5 из 10 [2023, WEB-DL 1080p]'
+        })
+        let b = key({
+            Title: 'Сериал / Series Name / Сезон 2 / Серии 1-6 из 10 [2023, WEB-DL 1080p]'
+        })
+
+        expect(a).toBe(b)
+    })
+
+    test('другой сезон или качество — другая раздача', () => {
+        let base = key({Title: 'Series Name S02E01-05 1080p', Tracker: 'rutor'})
+
+        expect(key({Title: 'Series Name S03E01-05 1080p', Tracker: 'rutor'})).not.toBe(base)
+        expect(key({Title: 'Series Name S02E01-05 720p', Tracker: 'rutor'})).not.toBe(base)
+        expect(key({Title: 'Series Name S02E01-05 1080p', Tracker: 'kinozal'})).not.toBe(base)
+    })
+
+    test('раздача целого сезона без диапазона серий — тоже продолжение', () => {
+        let results = [
+            row('Series Name S02E01-10 2160p WEB-DL', 200, {hash: 'x1'}),
+            row('Series Name Season 2 1080p WEB-DL', 40, {hash: 'pack'})
+        ]
+
+        let out = pick.pick(results, pick.context(SERIES, {}, {season: 2, episode: 6, last: {hash: 'pack'}}))
+
+        expect(out.list[0].raw.hash).toBe('pack')
+        expect(out.continues).toBe(true)
+    })
+})
+
+/**
+ * Раздача с одним-двумя сидерами проходит все отсечки и набирает очки за
+ * качество, студию и пометку «смотрели», но на стриминге не играет.
+ */
+suite('Слабые раздачи', () => {
+    test('живая раздача идёт раньше слабой, как бы та ни была хороша', () => {
+        let results = [
+            row('Series Name S02E01-10 2160p WEB-DL LostFilm', 2, {viewed: true}),
+            row('Series Name S02E01-10 720p WEBRip', 150)
+        ]
+
+        let out = pick.pick(
+            results,
+            pick.context(SERIES, {}, {season: 2, episode: 5, last: {voice: 'LostFilm', resolution: 2160}})
+        )
+
+        expect(out.list[0].seeders).toBe(150)
+    })
+
+    test('своя раздача зачахла — не продолжение, первой идёт живая', () => {
+        let results = [
+            row('Series Name S02E01-10 1080p WEB-DL', 1, {hash: 'mine'}),
+            row('Series Name S02E01-10 1080p WEB-DL', 90, {hash: 'other'})
+        ]
+
+        let out = pick.pick(results, pick.context(SERIES, {}, {season: 2, episode: 5, last: {hash: 'mine'}}))
+
+        expect(out.list[0].raw.hash).toBe('other')
+        expect(out.continues).toBe(false)
+    })
+
+    test('живых нет — слабые остаются, но с вопросом', () => {
+        let results = [row('Series Name S02E01-10 1080p WEB-DL', 2), row('Series Name S02E01-10 720p', 1)]
+
+        let out = pick.pick(results, pick.context(SERIES, {}, {season: 2, episode: 5}))
+
+        expect(out.list.length).toBe(2)
+        expect(out.confident, 'показать число раздающих и дать выбрать').toBe(false)
+    })
+})

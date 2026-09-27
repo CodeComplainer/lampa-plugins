@@ -1,4 +1,5 @@
 import keys from '../shared/keys'
+import titles from './titles'
 
 /**
  * Память по тайтлу: как этот сериал или фильм смотрели в прошлый раз.
@@ -68,9 +69,12 @@ function create(storage) {
     /**
      * @returns {{q: string, v: string, r: number, a: {l: string, n: string}, t: number}|null}
      *
-     * q — название, по которому нашлись раздачи
+     * q — название, по которому нашлись раздачи; пустая строка — «ищем по
+     *     названию карточки», запомненное прежде оказалось лишним
      * v — студия озвучки
      * r — разрешение
+     * h — хеш заголовка запущенной раздачи
+     * d — ключ той же раздачи, переживающий её обновление (новые серии)
      * a — аудиодорожка: язык и название
      * t — когда запись трогали в последний раз
      */
@@ -113,46 +117,78 @@ function create(storage) {
     }
 
     /**
-     * Продублировать рабочее название в штатный список уточнения.
+     * Поправить свою карточку в штатном списке уточнения.
      *
      * Ключ `user_clarifys` синхронизируется через CUB и читается обычным экраном
-     * торрентов ([filter.js:36](src/interaction/filter.js:36)), поэтому название
-     * всплывает первым и на другом устройстве — короче становится и нативный путь,
-     * а не только наша кнопка.
+     * торрентов ([filter.js:36](src/interaction/filter.js:36)), поэтому рабочее
+     * название всплывает первым и на другом устройстве — короче становится и
+     * нативный путь, а не только наша кнопка. Свою карточку заодно подрезаем:
+     * штатный код дописывает туда запросы вообще без ограничения.
      *
-     * Свою карточку заодно подрезаем: штатный код дописывает туда запросы
-     * вообще без ограничения.
+     * @param {Function} edit - (list) => новый список
      */
-    function clarify(card, query, keep) {
-        if (!card || !card.id || !query) return
-
+    function clarifys(card, edit) {
         let all = storage.get('user_clarifys', '{}') || {}
-        let list = (all[card.id] || []).filter((item) => item !== query)
+        let list = all[card.id] || []
 
-        list.push(query)
-
-        all[card.id] = list.slice(-(keep || CLARIFY_KEEP))
+        all[card.id] = edit(list).slice(-CLARIFY_KEEP)
 
         storage.set('user_clarifys', all)
     }
 
     /**
-     * Последнее название, которое человек вводил руками на экране торрентов.
+     * Название, по которому нашлась запущенная раздача.
      *
-     * Своей записи может не быть: в память название попадает по факту запуска
-     * файла, а уточнить поиск и уйти, ничего не включив, — обычное дело.
-     * Штатный список при этом уже всё запомнил, и не воспользоваться этим
-     * значит заставить человека уточнять поиск заново.
+     * Нестандартное запоминаем и ставим последним в штатный список уточнения.
+     * Если нашлось по обычному названию карточки, прежнее запомненное стираем —
+     * и из списка тоже, — а в `q` пишем пустую строку: «ищем по названию
+     * карточки». Иначе устаревшее название стояло бы первым в каждом следующем
+     * поиске, хотя человек давно ищет иначе.
      */
-    function lastClarify(card) {
+    function query(card, value) {
+        if (!card || !card.id || !value) return
+
+        if (titles.worth(card, value, storage.field('parse_lang'))) {
+            set(card, {q: value})
+            clarifys(card, (list) => list.filter((item) => item !== value).concat(value))
+
+            return
+        }
+
+        let rec = get(card)
+
+        if (!rec || !rec.q) return
+
+        let stale = rec.q
+
+        clarifys(card, (list) => list.filter((item) => item !== stale))
+        set(card, {q: ''})
+    }
+
+    /**
+     * По какому названию искать эту карточку, если не по её собственному.
+     *
+     * Запомненное по факту запуска — первым. Своей записи может не быть: уточнить
+     * поиск и уйти, ничего не включив, — обычное дело, а штатный список при этом
+     * уже всё запомнил, и не воспользоваться этим значит заставить человека
+     * уточнять заново. Пустое `q` — прошлый запуск нашёлся по названию карточки,
+     * и старые уточнения тут не к месту.
+     *
+     * @returns {string|null}
+     */
+    function searchName(card) {
         if (!card || !card.id) return null
+
+        let rec = get(card)
+
+        if (rec && typeof rec.q === 'string') return rec.q || null
 
         let list = (storage.get('user_clarifys', '{}') || {})[card.id] || []
 
         return list[list.length - 1] || null
     }
 
-    return {get, set, clarify, lastClarify, cardID, KEY, LIMIT}
+    return {get, set, query, searchName, cardID, KEY, LIMIT}
 }
 
 export default {create, cardID, KEY, LIMIT}

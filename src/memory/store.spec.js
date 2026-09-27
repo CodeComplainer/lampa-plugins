@@ -27,6 +27,9 @@ function fakeStorage(initial) {
         set(name, value) {
             data[name] = value
         },
+        get(name, empty) {
+            return data[name] === undefined ? JSON.parse(empty) : data[name]
+        },
         field() {
             return ''
         },
@@ -125,5 +128,51 @@ describe('субтитры: «какие» и «включены ли» — ра
 
         expect(memory.get(SERIES).so, 'выключены').toBe(false)
         expect(memory.get(SERIES).s, 'но помним какие').toEqual({l: 'ru', n: 'полные'})
+    })
+})
+
+/**
+ * Запомненное название стоит первым в каскаде поиска. Если раздача в последний
+ * раз нашлась по обычному названию карточки, прежнее больше не нужно — иначе
+ * поиск так и начинался бы с устаревшего, и штатный список уточнения тоже.
+ */
+describe('название для поиска', () => {
+    it('нестандартное запоминается и уходит в список уточнения', () => {
+        let storage = fakeStorage()
+        let memory = store.create(storage)
+
+        memory.query(SERIES, 'Other Name')
+
+        expect(memory.get(SERIES).q).toBe('Other Name')
+        expect(storage.dump().user_clarifys[SERIES.id]).toEqual(['Other Name'])
+    })
+
+    it('запуск по обычному названию стирает прежнее', () => {
+        let storage = fakeStorage()
+        let memory = store.create(storage)
+
+        memory.query(SERIES, 'Other Name')
+        memory.query(SERIES, 'Series Name')
+
+        expect(memory.get(SERIES).q, 'пустая строка — ищем по карточке').toBe('')
+        expect(memory.searchName(SERIES), 'и штатный список его не воскрешает').toBe(null)
+    })
+
+    it('чужие уточнения в штатном списке не трогает', () => {
+        let storage = fakeStorage({user_clarifys: {[SERIES.id]: ['Typed Name']}})
+        let memory = store.create(storage)
+
+        memory.query(SERIES, 'Other Name')
+        memory.query(SERIES, 'Series Name')
+
+        expect(storage.dump().user_clarifys[SERIES.id]).toEqual(['Typed Name'])
+    })
+
+    it('без запомненного названия обычное ничего не пишет', () => {
+        let memory = store.create(fakeStorage())
+
+        memory.query(SERIES, 'Series Name')
+
+        expect(memory.get(SERIES)).toBe(null)
     })
 })
