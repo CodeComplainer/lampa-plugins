@@ -36,6 +36,12 @@ const REFRESH_EVERY = 1000 * 60 * 30
 const SHOW_TTL = 1000 * 60 * 60 * 3
 
 /**
+ * Не раньше этого после запуска: главная собирается первой, и пересчёт с его
+ * запросами к TMDB не должен спорить с ней за сеть
+ */
+const STARTUP_WAIT = 1000 * 30
+
+/**
  * Сколько ждём один сериал. Запросы `Lampa.Api` сбрасываются вместе с её
  * сетью (смена профиля), и тогда ответа не будет вовсе, — пересчёт не должен
  * встать на этом навсегда.
@@ -77,11 +83,15 @@ let state = {t: 0, items: {}}
 /** Решение и проверка раздачи — у continue, рядом с кнопкой */
 let deps = null
 
-/** Ожидающие окончания текущего пересчёта; null — пересчёт не идёт */
-let waiting = null
+/** Есть ли хоть одна новая серия — иначе пометки искать незачем */
+let has_items = false
+
+/** Идёт ли пересчёт */
+let busy = false
 
 let shows = {}
 let network = null
+let timer = null
 let player_timer = null
 
 /**
@@ -93,6 +103,7 @@ function init(options) {
     deps = options
     network = new Lampa.Reguest()
     state = read()
+    has_items = Object.keys(state.items).length > 0
 
     if (!document.getElementById('continue-fresh-style')) $('body').append(STYLE)
 
@@ -100,22 +111,35 @@ function init(options) {
     addRow()
     watchCards()
 
-    // Сохранённый расчёт ещё свежий — не спорим за сеть с первым экраном
-    setTimeout(tick, Math.max(0, state.t + REFRESH_EVERY - Date.now()))
-    setInterval(tick, REFRESH_EVERY)
+    // Сохранённый расчёт ещё свежий — пересчитываем, только когда устареет
+    schedule(Math.max(STARTUP_WAIT, state.t + REFRESH_EVERY - Date.now()))
+
+    // Время запуска пишем там же, где ядро поднимает карточку в истории, —
+    // так видны и запуски мимо continue
+    Lampa.Favorite.listener.follow('add,added', (e) => {
+        if (e.where === 'history') played(e.card)
+    })
 
     // Досмотрел серию — она больше не новая, а следующая, может быть, уже да.
-    // Карточки сериалов в памяти, так что пересчёт обходится почти без сети.
+    // Изменился только этот сериал, остальные ждут своего пересчёта.
     Lampa.Player.listener.follow('destroy', () => {
         clearTimeout(player_timer)
 
-        player_timer = setTimeout(refresh, 3000)
+        player_timer = setTimeout(recheck, 3000)
     })
 }
 
-/** Во время просмотра сеть и процессор нужны плееру; после него пересчёт будет и так */
+/** Следующий пересчёт — один таймер на всё, чтобы проходы не шли подряд */
+function schedule(delay) {
+    clearTimeout(timer)
+
+    timer = setTimeout(tick, delay)
+}
+
+/** Во время просмотра сеть и процессор нужны плееру — откладываем */
 function tick() {
-    if (!Lampa.Player.opened()) refresh()
+    if (Lampa.Player.opened()) schedule(REFRESH_EVERY)
+    else refresh()
 }
 
 function read() {
@@ -170,11 +194,14 @@ function addRow() {
 
 /**
  * Состав — как у штатного (`favorite.js → continues`): история без
- * просмотренного и брошенного, по разделам. Порядок — `fresh.arrange`.
+ * просмотренного и брошенного, по разделам. Сама `continues` не годится:
+ * она обрезает список до переупорядочивания, и сериал из глубины истории
+ * не поднялся бы. Поменяется состав в ядре — поменять и здесь.
+ * Порядок — `fresh.arrange`.
  */
 function rowCards(media) {
-    let viewed = byId(Lampa.Favorite.get({type: 'viewed'}), true)
-    let thrown = byId(Lampa.Favorite.get({type: 'thrown'}), true)
+    let viewed = ids(Lampa.Favorite.get({type: 'viewed'}))
+    let thrown = ids(Lampa.Favorite.get({type: 'thrown'}))
     let cards = Lampa.Favorite.get({type: 'history'}).filter(
         (card) => card && !viewed[card.id] && !thrown[card.id] && inSection(card, media)
     )
@@ -182,9 +209,9 @@ function rowCards(media) {
     let bump = {}
 
     cards.forEach((card) => {
-        let item = card.original_name ? state.items[card.id] : null
+        let item = itemFor(card)
 
-        if (item && item.ok === true && !watched(card, item)) bump[card.id] = item
+        if (item?.ok === true) bump[card.id] = item
     })
 
     return fresh
@@ -206,14 +233,13 @@ function inSection(card, media) {
 }
 
 /**
- * Запуск раздачи — момент, когда ядро поднимает карточку в истории. Время
- * пишем сами: ядро хранит только порядок. Карточки, выпавшие из истории,
- * выбрасываются заодно.
+ * Карточку подняли в истории — это запуск. Время пишем сами: ядро хранит
+ * только порядок. Карточки, выпавшие из истории, выбрасываются заодно.
  */
 function played(card) {
     if (!card?.id) return
 
-    let history = byId(Lampa.Favorite.get({type: 'history'}), true)
+    let history = ids(Lampa.Favorite.get({type: 'history'}))
     let saved = Lampa.Storage.get(keys.KEYS.played, {}) || {}
     let out = {}
 
@@ -226,18 +252,22 @@ function played(card) {
     Lampa.Storage.set(keys.KEYS.played, out)
 }
 
-/**
- * Карточки по id. Без `any` — только сериалы: фильм с тем же номером
- * сериалом не считается.
- */
-function byId(cards, any) {
+/** Какие id есть в списке карточек */
+function ids(cards) {
     let out = {}
 
     cards.forEach((card) => {
-        if (card && (any || card.original_name) && !out[card.id]) out[card.id] = card
+        if (card) out[card.id] = true
     })
 
     return out
+}
+
+/** Новая серия сериала, если она есть и ещё не досмотрена */
+function itemFor(card) {
+    let item = card?.original_name ? state.items[card.id] : null
+
+    return item && !watched(card, item) ? item : null
 }
 
 /**
@@ -255,14 +285,10 @@ function watched(card, item) {
  * Пересчитать, у каких сериалов есть новое. По одному сериалу за раз:
  * это фоновая работа, спешить ей некуда, а TMDB и трекеры не любят залпов.
  */
-function refresh(done) {
-    if (waiting) {
-        if (done) waiting.push(done)
+function refresh() {
+    if (busy) return
 
-        return
-    }
-
-    waiting = done ? [done] : []
+    busy = true
 
     let list = candidates()
     let items = {}
@@ -300,6 +326,7 @@ function refresh(done) {
 
     function finish() {
         state = {t: Date.now(), items: items}
+        has_items = Object.keys(items).length > 0
 
         Lampa.Storage.set(keys.KEYS.fresh, state)
 
@@ -307,13 +334,32 @@ function refresh(done) {
 
         decorateAll()
 
-        let calls = waiting
+        busy = false
 
-        waiting = null
+        schedule(REFRESH_EVERY)
+    }
+}
 
-        calls.forEach((call) => {
-            call()
+/** После просмотра — только что смотренный сериал, если он в числе проверяемых */
+function recheck() {
+    let card = candidates()[0]
+    let last = Lampa.Favorite.get({type: 'history'})[0]
+
+    if (busy || !card || card.id !== last?.id) return
+
+    try {
+        inspect(card, (item) => {
+            if (item) state.items[card.id] = item
+            else delete state.items[card.id]
+
+            has_items = Object.keys(state.items).length > 0
+
+            Lampa.Storage.set(keys.KEYS.fresh, state)
+
+            decorateAll()
         })
+    } catch (err) {
+        console.error('Continue', 'fresh error:', card.id, err)
     }
 }
 
@@ -332,6 +378,9 @@ function inspect(card, done) {
 
         live.number_of_seasons = info.number_of_seasons
         live.next_episode_to_air = info.next_episode_to_air
+        // В истории карточка без жанров, а поиск раздачи по ним уточняет
+        // запрос и без них падает (parser.js → `jackett`)
+        live.genres = live.genres || info.genres
 
         deps.describe(live, (decision, list) => {
             let item = list ? fresh.check(decision, list, info) : null
@@ -352,7 +401,7 @@ function inspect(card, done) {
  * предлагаем: человек ясно сказал, что смотреть не будет.
  */
 function candidates() {
-    let thrown = byId(Lampa.Favorite.get({type: 'thrown'}))
+    let thrown = ids(Lampa.Favorite.get({type: 'thrown'}))
 
     return Lampa.Favorite.get({type: 'history'})
         .filter((c) => c && typeof c.id === 'number' && c.original_name && !thrown[c.id])
@@ -376,6 +425,7 @@ function show(id, done) {
         (json) => {
             let info = {
                 number_of_seasons: json.number_of_seasons,
+                genres: json.genres || [],
                 next_episode_to_air: json.next_episode_to_air || null,
                 status: json.status,
                 seasons: (json.seasons || []).map((s) => ({
@@ -401,6 +451,9 @@ function watchCards() {
     if (typeof MutationObserver === 'undefined') return
 
     let observer = new MutationObserver((mutations) => {
+        // Пометить нечего — не перебираем узлы, которых в плеере много
+        if (!has_items) return
+
         mutations.forEach((mutation) => {
             for (let i = 0; i < mutation.addedNodes.length; i++) {
                 let node = mutation.addedNodes[i]
@@ -443,9 +496,7 @@ function decorate(node) {
     if (!view) return
 
     let badge = view.getElementsByClassName('cc-fresh')[0]
-    let item = data?.original_name ? state.items[data.id] : null
-
-    if (item && watched(data, item)) item = null
+    let item = itemFor(data)
 
     if (!item) {
         if (badge) badge.parentNode.removeChild(badge)
@@ -471,4 +522,4 @@ function decorate(node) {
     badge.firstChild.textContent = text
 }
 
-export default {init, refresh, played}
+export default {init, refresh}
