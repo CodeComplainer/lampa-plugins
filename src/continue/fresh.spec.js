@@ -61,19 +61,19 @@ suite('Новая серия', () => {
     test('досмотрел прошлую, следующая вышла на днях', () => {
         let item = run(aired([5], 2), {'1:4': 95}, show([8]))
 
-        expect(item).toMatchObject({s: 1, e: 5, n: 1, f: null})
+        expect(item).toMatchObject({s: 1, e: 5, seen: 4, aired: 5, total: 8, fresh: true, f: null})
     })
 
     test('отстал на несколько серий — считает все новые', () => {
         let item = run(aired([6], 1), {'1:3': 100}, show([8]))
 
-        expect(item).toMatchObject({s: 1, e: 4, n: 3})
+        expect(item).toMatchObject({s: 1, e: 4, seen: 3, aired: 6, fresh: true})
     })
 
     test('новую уже начал — она всё ещё новая, пока не досмотрена', () => {
         let item = run(aired([5], 2), {'1:4': 100, '1:5': 30}, show([8]))
 
-        expect(item).toMatchObject({s: 1, e: 5, n: 1})
+        expect(item).toMatchObject({s: 1, e: 5, seen: 4, fresh: true})
     })
 
     test('всё просмотрено — нового нет', () => {
@@ -87,13 +87,30 @@ suite('Новая серия', () => {
     test('старый сериал запоем — следующая доступна, но не новая', () => {
         let item = run(aired([10, 10], 900), {'1:3': 100}, show([10, 10], {status: 'Ended'}))
 
-        expect(item).toBeNull()
+        expect(item).toMatchObject({s: 1, e: 4, seen: 3, aired: 10, total: 10, fresh: false})
+    })
+
+    test('догнал эфир — полоска сезона без пометки', () => {
+        let info = show([10], {
+            next_episode_to_air: {season_number: 1, episode_number: 7, air_date: daysAgo(-5)}
+        })
+        let item = run(aired([6], 2), {'1:6': 100}, info)
+
+        expect(item).toMatchObject({s: 1, e: 7, seen: 6, aired: 6, total: 10, fresh: false})
+    })
+
+    test('догнал эфир, а дальше новый сезон — показывать нечего', () => {
+        let info = show([10, 8], {
+            next_episode_to_air: {season_number: 2, episode_number: 1, air_date: daysAgo(-30)}
+        })
+
+        expect(run(aired([10], 20), {'1:10': 100}, info)).toBeNull()
     })
 
     test('новый сезон после досмотренного старого', () => {
         let item = run(aired([10, 1], 3), {'1:10': 100}, show([10, 8]))
 
-        expect(item).toMatchObject({s: 2, e: 1, n: 1})
+        expect(item).toMatchObject({s: 2, e: 1, seen: 0, aired: 1, total: 8, fresh: true})
     })
 
     test('серия, которой нет среди вышедших, не обещается', () => {
@@ -113,10 +130,10 @@ suite('Финал', () => {
         expect(item.f).toBe('season')
     })
 
-    test('финал среди нескольких новых серий тоже подсвечивается', () => {
+    test('финал дальше среди новых — не подсвечивается, пока следующая не он', () => {
         let item = run(aired([10], 1, {'1:10': 'finale'}), {'1:7': 100}, show([10]))
 
-        expect(item).toMatchObject({e: 8, n: 3, f: 'season'})
+        expect(item).toMatchObject({e: 8, f: null})
     })
 
     test('финал сериала — если он закончен', () => {
@@ -149,16 +166,56 @@ suite('Финал', () => {
 
 suite('Подпись, даты и порядок', () => {
     test('подпись', () => {
-        let t = (key) => ({continue_fresh_season_finale: 'Финал сезона'})[key] || key
+        let t = (key) => ({continue_fresh_finale: 'Финал'})[key] || key
 
-        expect(fresh.label({s: 2, e: 5, n: 1, f: null}, t)).toBe('S2E5')
-        expect(fresh.label({s: 2, e: 5, n: 3, f: null}, t)).toBe('S2E5 +2')
-        expect(fresh.label({s: 2, e: 10, n: 1, f: 'season'}, t)).toBe('S2E10 · Финал сезона')
+        expect(fresh.label({s: 2, e: 5, f: null}, t)).toBe('S2E5')
+        expect(fresh.label({s: 2, e: 10, f: 'season'}, t)).toBe('Финал')
+        expect(fresh.label({s: 3, e: 8, f: 'series'}, t)).toBe('Финал')
+        // Раздачи нет — пометка про ожидание, а не про финал
+        expect(fresh.label({s: 2, e: 10, f: 'season', ok: false}, t)).toBe('S2E10')
     })
 
     test('дата эфира — местная полночь', () => {
         expect(fresh.airTime('2026-09-27')).toBe(new Date(2026, 8, 27).getTime())
         expect(Number.isNaN(fresh.airTime(null))).toBe(true)
+    })
+})
+
+suite('Полоска сезона', () => {
+    const kinds = (item) => fresh.zones(item).map((z) => z.kind + ':' + z.count)
+
+    test('сезон в эфире: посмотрено, новое, пустой хвост', () => {
+        expect(kinds({seen: 4, aired: 5, total: 10, fresh: true, f: null, ok: true})).toEqual([
+            'seen:4',
+            'new:1',
+            'ahead:5'
+        ])
+    })
+
+    test('сезон вышел целиком — хвоста нет', () => {
+        expect(kinds({seen: 5, aired: 8, total: 8, fresh: true, f: null})).toEqual(['seen:5', 'new:3'])
+    })
+
+    test('следующая — финал', () => {
+        expect(kinds({seen: 7, aired: 8, total: 8, fresh: true, f: 'season', ok: true})).toEqual([
+            'seen:7',
+            'finale:1'
+        ])
+    })
+
+    test('раздачи нет — серии вышли, но смотреть нечем', () => {
+        expect(kinds({seen: 9, aired: 10, total: 10, fresh: true, f: 'season', ok: false})).toEqual([
+            'seen:9',
+            'wait:1'
+        ])
+    })
+
+    test('старый сериал — доступно, но не ново', () => {
+        expect(kinds({seen: 3, aired: 10, total: 10, fresh: false, f: null})).toEqual(['seen:3', 'open:7'])
+    })
+
+    test('догнал эфир', () => {
+        expect(kinds({seen: 6, aired: 6, total: 12, fresh: false, f: null})).toEqual(['seen:6', 'ahead:6'])
     })
 })
 

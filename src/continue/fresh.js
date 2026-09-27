@@ -58,20 +58,42 @@ function finale(show, ep, list) {
 }
 
 /**
- * Есть ли у сериала несмотренная новая серия.
+ * Что показать на постере сериала: с какой серии продолжать и где она в сезоне.
+ *
+ * Пометка на постере — только когда что-то случилось: вышла новая серия.
+ * Полоска сезона — всегда, когда есть что досмотреть или сезон ещё выходит:
+ * по ней видно, сколько серий вышло, сколько ещё будет и где человек сейчас.
  *
  * @param {Object} decision - решение кнопки: `resume.decideSeries`
  * @param {Array} list - вышедшие серии по порядку, как их видит кнопка
  * @param {Object} show - {seasons, next_episode_to_air, status}
  * @param {number} [now]
- * @returns {null|{s, e, n, f, air}} — с какой серии смотреть, сколько новых,
- *   финал ли среди них и когда вышла последняя
+ * @returns {null|{s, e, seen, aired, total, fresh, f, air}} — серия, сколько
+ *   серий сезона до неё, сколько вышло и сколько объявлено, новое ли это,
+ *   финальная ли она и когда вышла последняя серия сериала
  */
 function check(decision, list, show, now) {
-    // «Досмотрел прошлую — следующая вышла» или «новую уже начал». Ни разу не
-    // смотренный сериал — не новое: в истории он оказывается и просто от
-    // открытой карточки.
-    if (decision.mode !== 'next' && decision.mode !== 'resume') return null
+    // «Досмотрел прошлую — следующая вышла», «начал и не досмотрел» или «догнал
+    // эфир». Ни разу не смотренный сериал пропускаем: в истории он оказывается
+    // и просто от открытой карточки.
+    if (decision.mode !== 'next' && decision.mode !== 'resume' && decision.mode !== 'waiting') return null
+
+    let season = list.filter((ep) => ep.season_number === decision.season)
+
+    // Догнал эфир, а дальше новый сезон — в текущем смотреть нечего
+    if (!season.length) return null
+
+    let latest = list[list.length - 1]
+    let announced = (show.seasons || []).find((s) => s.season_number === decision.season)
+    let base = {
+        s: decision.season,
+        e: decision.episode,
+        aired: season.length,
+        total: Math.max(season.length, announced?.episode_count || 0),
+        air: latest.air_date
+    }
+
+    if (decision.mode === 'waiting') return Object.assign(base, {seen: season.length, fresh: false, f: null})
 
     let index = list.findIndex(
         (ep) => ep.season_number === decision.season && ep.episode_number === decision.episode
@@ -80,38 +102,63 @@ function check(decision, list, show, now) {
     // Цели нет среди вышедших — кнопке её не найти, обещать нечего
     if (index === -1) return null
 
-    let latest = list[list.length - 1]
-    let air = airTime(latest.air_date)
-
     now = now || Date.now()
 
-    if (!(now - air < AIRING_DAYS * DAY)) return null
+    return Object.assign(base, {
+        seen: season.indexOf(list[index]),
+        // Новое — пока последняя серия вышла недавно. Старый сериал, который
+        // досматривают запоем, получает только полоску: там ничего не случилось.
+        fresh: now - airTime(latest.air_date) < AIRING_DAYS * DAY,
+        f: finale(show, list[index], list)
+    })
+}
 
-    return {
-        s: decision.season,
-        e: decision.episode,
-        n: list.length - index,
-        f: finale(show, latest, list),
-        air: latest.air_date
+/**
+ * Полоска сезона по зонам, от первой серии к последней объявленной.
+ *
+ *   seen   — посмотрено
+ *   new    — вышло недавно, можно смотреть
+ *   finale — следующая серия, и она финальная
+ *   wait   — вышло, но раздачи ещё нет
+ *   open   — вышло давно, можно смотреть
+ *   ahead  — ещё не вышло
+ *
+ * @param {Object} item - результат `check` и `ok` проверки раздачи
+ * @returns {Array} [{kind, count}], соседние серии одной зоны слиты
+ */
+function zones(item) {
+    let out = []
+    let ahead = item.fresh ? (item.ok === false ? 'wait' : 'new') : 'open'
+
+    push('seen', item.seen)
+
+    if (item.f && ahead === 'new') {
+        push('finale', 1)
+        push('new', item.aired - item.seen - 1)
+    } else {
+        push(ahead, item.aired - item.seen)
+    }
+
+    push('ahead', item.total - item.aired)
+
+    return out
+
+    function push(kind, count) {
+        if (count > 0) out.push({kind: kind, count: count})
     }
 }
 
 /**
- * Надпись на постере. Короткая: места там на пару слов.
+ * Надпись на пометке. Короткая: пометка стоит в одну строку с рейтингом.
+ * Номер финальной серии человеку ничего не говорит, слово — говорит.
  *
- *   S2E5         одна новая серия
- *   S2E5 +2      с пятой, и после неё ещё две
- *   S2E10 · Финал сезона
+ *   S2E5    новая серия; или вышла, но раздачи ещё нет
+ *   Финал   следующая серия финальная
  */
 function label(item, translate) {
-    let text = 'S' + item.s + 'E' + item.e
+    if (item.f && item.ok !== false) return translate('continue_fresh_finale')
 
-    if (item.n > 1) text += ' +' + (item.n - 1)
-
-    // continue_fresh_season_finale или continue_fresh_series_finale
-    if (item.f) text += ' · ' + translate('continue_fresh_' + item.f + '_finale')
-
-    return text
+    return 'S' + item.s + 'E' + item.e
 }
 
 /**
@@ -151,4 +198,4 @@ function arrange(cards, played, fresh) {
         .map((entry) => entry.card)
 }
 
-export default {airTime, finale, check, label, arrange}
+export default {airTime, finale, check, zones, label, arrange}

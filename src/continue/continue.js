@@ -221,6 +221,10 @@ function hint(card, root) {
 function show(card, root, decision) {
     let where = resume.label(decision, Lampa.Lang.translate, formatDate)
 
+    // continue_fresh_season_finale или continue_fresh_series_finale
+    if (decision.finale)
+        where += ' · ' + Lampa.Lang.translate('continue_fresh_' + decision.finale + '_finale')
+
     draw(root, where)
 
     probeFresh(card, decision, (available) => {
@@ -351,6 +355,11 @@ function describe(card, done) {
             let last = list[list.length - 1]
 
             decision.airing = !target || (!!last && decision.season === last.season_number)
+
+            // На постере финал — одно слово, а сезона он или сериала, пишет кнопка
+            if (target && (decision.mode === 'next' || decision.mode === 'resume')) {
+                decision.finale = fresh.finale(card, target, list)
+            }
         }
 
         done(decision, list)
@@ -1096,6 +1105,11 @@ Lampa.Lang.add({
         ru: 'В раздаче не нашлось видеофайла',
         en: 'No video file in the release',
         uk: 'У роздачі не знайдено відеофайл'
+    },
+    continue_fresh_finale: {
+        ru: 'Финал',
+        en: 'Finale',
+        uk: 'Фінал'
     },
     continue_fresh_season_finale: {
         ru: 'Финал сезона',
