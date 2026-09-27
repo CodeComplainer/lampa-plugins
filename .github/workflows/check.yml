@@ -1,0 +1,101 @@
+# Проверка каждого push и pull request, а на main — ещё и публикация на Pages.
+#
+# Порядок идёт от дешёвого к дорогому, и каждый шаг ловит своё:
+# стиль — Biome; логика, запуск бандлов и архив раздач — vitest;
+# «телевизор это разберёт» — es-check по browserslist из package.json.
+# Публикуется ровно та сборка, что прошла проверку: dist/ из этого же задания.
+
+name: Проверка
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+jobs:
+    check:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v5
+
+            - uses: actions/setup-node@v5
+              with:
+                  node-version-file: package.json
+                  cache: npm
+
+            - run: npm ci
+
+            - name: Стиль и типовые ошибки (Biome)
+              run: npx biome ci --error-on-warnings src tools
+
+            - name: Тесты, запуск бандлов и архив раздач
+              run: npm test
+
+            - name: Сборка и совместимость с телевизором
+              run: npm run check:compat
+
+            - if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+              uses: actions/upload-pages-artifact@v4
+              with:
+                  path: dist
+
+    # Собранных файлов в репозитории нет: сайт уезжает на Pages отсюда.
+    # Адреса не меняются — плагины лежат в корне сайта, как и раньше.
+    deploy:
+        needs: check
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        runs-on: ubuntu-latest
+        permissions:
+            pages: write
+            id-token: write
+        # публикации не должны обгонять друг друга
+        concurrency:
+            group: pages
+            cancel-in-progress: false
+        environment:
+            name: github-pages
+            url: ${{ steps.deployment.outputs.page_url }}
+        steps:
+            - id: deployment
+              uses: actions/deploy-pages@v4
+
+    # Pages может отдать старую версию из кеша или не тот MIME, и телевизор
+    # молча останется без плагина. Поэтому каждый файл скачивается так же,
+    # как его скачает Lampa, и сверяется с собранным.
+    served:
+        needs: deploy
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/download-artifact@v5
+              with:
+                  name: github-pages
+
+            - name: Файлы раздаются свежими и с правильным MIME
+              run: |
+                  mkdir site && tar -xf artifact.tar -C site && cd site
+                  base="https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}"
+                  stale=$(ls *.js plugins.json)
+
+                  # CDN Pages держит старую версию до десяти минут
+                  for attempt in $(seq 1 20); do
+                      left=''
+                      for file in $stale; do
+                          type=$(curl -s -o /tmp/served -w '%{content_type}' "$base/$file?check=$GITHUB_RUN_ID-$attempt")
+                          case "$file:$type" in
+                              *.js:application/javascript*|*.json:application/json*) ;;
+                              *) echo "::error::$file отдаётся как «$type» — Lampa его не примет"; exit 1 ;;
+                          esac
+                          cmp -s /tmp/served "$file" || left="$left $file"
+                      done
+                      stale=$left
+                      [ -z "$stale" ] && { echo 'Всё раздаётся свежим'; exit 0; }
+                      echo "Ещё старые:$stale — жду"
+                      sleep 30
+                  done
+
+                  echo "::error::Pages так и не отдал свежие версии:$stale"
+                  exit 1

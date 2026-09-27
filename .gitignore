@@ -2,10 +2,8 @@
 CLAUDE.local.md
 TODO.md
 
-# devtools раздаётся только с машины разработчика: исходник в src/ публичный,
-# а собранный бандл в корне означал бы выдачу через Pages.
-# Ведущая косая обязательна — иначе правило поймало бы и src/devtools/devtools.js.
-/devtools.js
+# собранный сайт: на GitHub его собирает и публикует pages.yml
+/dist/
 
 node_modules/
 
