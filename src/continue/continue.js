@@ -155,12 +155,22 @@ function followNative() {
 
 /**
  * Пересчитать подпись у уже нарисованной кнопки.
+ *
+ * Кнопки нет — карточка ещё грузится, и пересчитывать нечего: подпись нарисует
+ * addButton. Заодно это единственный момент, когда `object.card` можно верить.
+ * `activity`/`start` приходит и при открытии, раньше загрузки, и тогда там
+ * карточка из списка, откуда её открыли: без жанров, а часто и без числа
+ * сезонов. Полную Lampa кладёт туда же, но только когда загрузит
+ * (full.js → `Api.full`, «Для плагинов которые используют Activity.active().card»).
+ * С тонкой карточкой фоновый поиск падал в парсере на `movie.genres.map`
+ * (parser.js → `jackett`).
  */
 function refresh(object) {
     try {
-        let card = (object && (object.card || object.movie)) || null
+        let card = object?.card || object?.movie
+        let root = object?.activity?.render()
 
-        if (card && object.activity) hint(card, object.activity.render())
+        if (card && root?.find('.button--continue').length) hint(card, root)
     } catch (err) {
         console.error('Continue', 'refresh error:', err)
     }
