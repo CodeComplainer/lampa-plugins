@@ -1,0 +1,16 @@
+# Раз в месяц — одним PR на все инструменты разработки: проверки выше скажут,
+# можно ли его принимать. На сами плагины это не влияет, у них нет зависимостей.
+version: 2
+updates:
+    - package-ecosystem: npm
+      directory: /
+      schedule:
+          interval: monthly
+      groups:
+          tools:
+              patterns: ['*']
+
+    - package-ecosystem: github-actions
+      directory: /
+      schedule:
+          interval: monthly
