@@ -48,6 +48,14 @@ const STARTUP_WAIT = 1000 * 30
  */
 const STEP_WAIT = 1000 * 60
 
+/**
+ * Устройство сохранённого расчёта. Это кеш, а не данные человека: расчёт
+ * старого устройства просто выбрасывается и считается заново. Поменял поля
+ * записи в `fresh.check` — подними число, иначе до пересчёта постеры
+ * останутся пустыми.
+ */
+const FORMAT = 2
+
 /** Больше серий — полоска сплошная: столько делений с дивана не различить */
 const SEGMENTS_MAX = 16
 
@@ -149,7 +157,7 @@ const ICONS = {
     wait: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M8 4.6V8l2.4 1.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>'
 }
 
-/** {t, items: {id: {s, e, seen, aired, total, fresh, f, air, ok}}} — `fresh.check` */
+/** {v, t, items: {id: {s, e, seen, aired, total, fresh, f, air, ok}}} — `fresh.check` */
 let state = {t: 0, items: {}}
 
 /** Решение и проверка раздачи — у continue, рядом с кнопкой */
@@ -217,7 +225,7 @@ function tick() {
 function read() {
     let saved = Lampa.Storage.get(keys.KEYS.fresh, '{}')
 
-    if (!saved || typeof saved !== 'object' || !saved.items) return {t: 0, items: {}}
+    if (!saved || typeof saved !== 'object' || !saved.items || saved.v !== FORMAT) return {t: 0, items: {}}
 
     return saved
 }
@@ -397,7 +405,7 @@ function refresh() {
     }
 
     function finish() {
-        state = {t: Date.now(), items: items}
+        state = {v: FORMAT, t: Date.now(), items: items}
         has_items = Object.keys(items).length > 0
 
         Lampa.Storage.set(keys.KEYS.fresh, state)
