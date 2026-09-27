@@ -11,7 +11,7 @@ import studio from './studio'
  * @param {string} title - название раздачи
  * @returns {{source: string, is_cam: boolean, source_rank: number, resolution: number|null,
  *            hdr: boolean, dv: boolean, season: number|null, seasons: number[],
- *            episodes: number[]|null, year: number|null, voices: string[], langs: string[]}}
+ *            episodes: number[]|null, stem: string, year: number|null, voices: string[], langs: string[]}}
  */
 function parse(title) {
     let raw = (title || '') + ''
@@ -29,6 +29,7 @@ function parse(title) {
         season: detectSeason(norm),
         seasons: detectSeasons(norm),
         episodes: detectEpisodes(norm),
+        stem: stripEpisodes(norm),
         year: detectYear(norm),
         voices: detectVoices(raw),
         langs: detectLangs(norm)
@@ -162,43 +163,50 @@ function detectSeasons(norm) {
 }
 
 /**
+ * Как в названиях пишут серии. Одна грамматика на два вопроса: какие серии
+ * в раздаче (detectEpisodes) и как выглядит заголовок без них (stripEpisodes).
+ * Порядок важен: диапазон разбирается раньше одиночной серии.
+ *
+ * range(m) — [от, до] по совпадению.
+ */
+const EPISODE_PATTERNS = [
+    {re: /\b\d{1,2}x(\d{1,3})(?:\s*-\s*(\d{1,3}))?/, range: (m) => [m[1], m[2] || m[1]]},
+    {re: /\bs\d{1,2}e(\d{1,3})(?:\s*-\s*(?:e)?(\d{1,3}))?/, range: (m) => [m[1], m[2] || m[1]]},
+    // 'E1-12' без сезона — так подписывают аниме и дорамы
+    {re: /(?:^|[^a-zа-яё0-9])e(\d{1,3})\s*-\s*(?:e)?(\d{1,3})\b/, range: (m) => [m[1], m[2]]},
+    // одиночная серия; диапазон уже разобран шаблоном выше
+    {re: /(?:^|[^a-zа-яё0-9])e(\d{1,3})\b/, range: (m) => [m[1], m[1]]},
+    {re: /(\d{1,3})\s*-\s*(\d{1,3})\s*(?:сери|эп|из|of)/, range: (m) => [m[1], m[2]]},
+    {re: /(\d{1,3})\s*сери/, range: (m) => [m[1], m[1]]},
+    // «5 из 13 эп.», «12 of 24», «4 из ?» — сколько серий уже вышло
+    {re: /(\d{1,3})\s*(?:из|of)\s*(?:\d{1,3}|\?)/, range: (m) => [1, m[1]]}
+]
+
+/**
  * Серии. Возвращаем [от, до] — одиночная серия становится [5,5].
  */
 function detectEpisodes(norm) {
-    let m
+    for (let i = 0; i < EPISODE_PATTERNS.length; i++) {
+        let pattern = EPISODE_PATTERNS[i]
+        let m = norm.match(pattern.re)
 
-    if ((m = norm.match(/\b\d{1,2}x(\d{1,3})(?:\s*-\s*(\d{1,3}))?/))) {
-        return [parseInt(m[1], 10), parseInt(m[2] || m[1], 10)]
-    }
-
-    if ((m = norm.match(/\bs\d{1,2}e(\d{1,3})(?:\s*-\s*(?:e)?(\d{1,3}))?/))) {
-        return [parseInt(m[1], 10), parseInt(m[2] || m[1], 10)]
-    }
-
-    // 'E1-12' без сезона — так подписывают аниме и дорамы
-    if ((m = norm.match(/(?:^|[^a-zа-яё0-9])e(\d{1,3})\s*-\s*(?:e)?(\d{1,3})\b/))) {
-        return [parseInt(m[1], 10), parseInt(m[2], 10)]
-    }
-
-    // одиночная серия; диапазон уже разобран шаблоном выше
-    if ((m = norm.match(/(?:^|[^a-zа-яё0-9])e(\d{1,3})\b/))) {
-        return [parseInt(m[1], 10), parseInt(m[1], 10)]
-    }
-
-    if ((m = norm.match(/(\d{1,3})\s*-\s*(\d{1,3})\s*(?:сери|эп|из|of)/))) {
-        return [parseInt(m[1], 10), parseInt(m[2], 10)]
-    }
-
-    if ((m = norm.match(/(\d{1,3})\s*сери/))) {
-        return [parseInt(m[1], 10), parseInt(m[1], 10)]
-    }
-
-    // «5 из 13 эп.», «12 of 24», «4 из ?» — сколько серий уже вышло
-    if ((m = norm.match(/(\d{1,3})\s*(?:из|of)\s*(?:\d{1,3}|\?)/))) {
-        return [1, parseInt(m[1], 10)]
+        if (m) return pattern.range(m).map((n) => parseInt(n, 10))
     }
 
     return null
+}
+
+/**
+ * Заголовок без номеров серий — то, что у раздачи не меняется, когда
+ * в неё добавляют новую серию: «1-5 из 10» и «1-6 из 10» дают одно и то же.
+ */
+function stripEpisodes(norm) {
+    return EPISODE_PATTERNS.reduce(
+        (str, pattern) => str.replace(new RegExp(pattern.re.source, 'g'), ' # '),
+        norm
+    )
+        .replace(/\s+/g, ' ')
+        .trim()
 }
 
 /**

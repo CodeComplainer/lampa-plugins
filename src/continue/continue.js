@@ -108,6 +108,49 @@ function startPlugin() {
 
         if (active && active.component === 'full') refresh(active)
     })
+
+    followNative()
+}
+
+/**
+ * Раздача, открытая на штатном экране торрентов и ждущая запуска файла.
+ */
+let pending = null
+
+/**
+ * Запуск раздачи мимо кнопки — через штатный экран торрентов.
+ *
+ * Раньше такой запуск проходил незамеченным: в памяти оставалась раздача,
+ * которую когда-то включала кнопка, и continue упорно возвращал на неё, хотя
+ * человек давно перешёл на другую. Какую раздачу смотреть — решение того же
+ * рода, что и при нажатии кнопки, поэтому запоминается так же.
+ *
+ * Засчитываем по запуску файла, а не по открытию раздачи: открыть, посмотреть
+ * список и уйти — обычное дело. Название для поиска на этом пути запоминает
+ * memory, здесь только сама раздача.
+ */
+function followNative() {
+    Lampa.Listener.follow('torrent', (e) => {
+        if (e.type !== 'onenter') return
+
+        let active = Lampa.Activity.active() || {}
+
+        pending = active.movie && e.element ? {card: active.movie, raw: e.element} : null
+    })
+
+    Lampa.Listener.follow('torrent_file', (e) => {
+        if (e.type === 'list_close') pending = null
+
+        if (e.type !== 'onenter' || !pending) return
+
+        try {
+            rememberRelease(pending.card, pick.normalize(pending.raw), null)
+        } catch (err) {
+            console.error('Continue', 'native launch error:', err)
+        }
+
+        pending = null
+    })
 }
 
 /**
@@ -153,23 +196,29 @@ function addButton(e) {
  * карточка могла перерисоваться, и старый объект остался бы вне документа.
  */
 function hint(card, root) {
-    describe(card, (decision) => {
-        draw(root, resume.label(decision, Lampa.Lang.translate, formatDate))
+    describe(card, (decision) => show(card, root, decision))
+}
 
-        probeFresh(card, decision, (available) => {
-            // Серия вышла по календарю, но раздачи с ней ещё нет. Приглушаем
-            // иконку, чтобы это читалось без наведения, а подпись объясняет
-            // причину, когда кнопка в фокусе.
-            let where = resume.label(decision, Lampa.Lang.translate, formatDate)
+/**
+ * Нарисовать подпись по уже принятому решению. Отдельно от hint, чтобы после
+ * нажатия, когда решение на руках, не спрашивать серии заново.
+ */
+function show(card, root, decision) {
+    let where = resume.label(decision, Lampa.Lang.translate, formatDate)
 
-            draw(
-                root,
-                available
-                    ? where
-                    : (where ? where + ' · ' : '') + Lampa.Lang.translate('continue_not_yet_released'),
-                !available
-            )
-        })
+    draw(root, where)
+
+    probeFresh(card, decision, (available) => {
+        // Серия вышла по календарю, но раздачи с ней ещё нет. Приглушаем
+        // иконку, чтобы это читалось без наведения, а подпись объясняет
+        // причину, когда кнопка в фокусе.
+        draw(
+            root,
+            available
+                ? where
+                : (where ? where + ' · ' : '') + Lampa.Lang.translate('continue_not_yet_released'),
+            !available
+        )
     })
 
     function draw(root, text, unavailable) {
@@ -188,69 +237,68 @@ function hint(card, root) {
     }
 }
 
-/** Серия считается свежей, пока раздачи могут ещё не появиться */
-const FRESH_DAYS = 7
-
-/** Насколько доверяем прошлой проверке */
+/**
+ * Насколько доверяем прошлой проверке. «Нет» проверяем часто — раздача вот-вот
+ * появится; «есть» держится дольше: вышедшая серия из раздач не пропадает.
+ */
 const PROBE_TTL = 1000 * 60 * 30
+const PROBE_TTL_OK = 1000 * 60 * 60 * 12
 
 /**
  * Фоновая проверка: есть ли вообще раздача с нужной серией.
  *
- * Делается только для свежих серий — у старых раздачи заведомо есть, и гонять
- * поиск при каждом открытии карточки незачем. Результат кешируется, поэтому
- * повторные заходы обходятся без запроса.
+ * Делается для серий последнего вышедшего сезона. Раньше порогом была неделя
+ * от эфира, но никакой срок не угадывает, когда появится озвучка: у нишевого
+ * сериала она отстаёт и на три недели, и всё это время кнопка обещала серию,
+ * которой нет. Граница проходит не по дате, а по смыслу: раздачи прошлых
+ * сезонов уже собраны целиком, а текущий ещё догоняет эфир. Результат
+ * кешируется, поэтому повторные заходы обходятся без запроса.
  */
 function probeFresh(card, decision, done) {
-    if (decision.mode !== 'next' && decision.mode !== 'first') return
+    if (decision.mode === 'waiting' || decision.mode === 'restart') return
     if (!decision.episode || !isSeries(card)) return
-    if (!decision.air || !isFresh(decision.air)) return
 
-    let key = cardID(card) + ':' + decision.season + ':' + decision.episode
+    // Кеш смотрим для любой серии: его пишет и нажатие на кнопку, и если оно
+    // ничего не нашло, подпись должна это отражать.
     let cache = Lampa.Storage.cache(keys.KEYS.probe, 100, {})
-    let cached = cache[key]
+    let cached = cache[probeKey(card, decision)]
 
-    if (cached && Date.now() - cached.t < PROBE_TTL) return done(cached.ok)
+    if (cached && Date.now() - cached.t < (cached.ok ? PROBE_TTL_OK : PROBE_TTL)) return done(cached.ok)
+
+    if (decision.mode !== 'next' && decision.mode !== 'first') return
+    if (!decision.airing) return
 
     search(
         card,
-        (results, query) => {
-            let out = pick.pick(
-                results,
-                pick.context(card, cardFilter(card), {
-                    season: decision.season,
-                    episode: decision.episode,
-                    no_cam: Lampa.Storage.field(keys.KEYS.no_cam) !== false,
-                    aliases: aliases(card, query)
-                })
-            )
-
+        evaluator(card, decision),
+        (out) => {
             let ok = out.list.length > 0
 
-            remember(key, ok)
+            rememberProbe(card, decision, ok)
 
             done(ok)
         },
         () => {}
     )
-
-    function remember(key, ok) {
-        let all = Lampa.Storage.cache(keys.KEYS.probe, 100, {})
-
-        delete all[key]
-
-        all[key] = {ok: ok, t: Date.now()}
-
-        Lampa.Storage.set(keys.KEYS.probe, all)
-    }
 }
 
-function isFresh(air) {
-    let time = new Date(air).getTime()
+function probeKey(card, decision) {
+    return cardID(card) + ':' + decision.season + ':' + decision.episode
+}
 
-    if (Number.isNaN(time)) return false
+/**
+ * Итог проверки. Пишется и из фона, и по нажатию: если кнопка ничего не
+ * нашла, подпись обязана перестать обещать серию, а не ждать своего срока.
+ */
+function rememberProbe(card, decision, ok) {
+    let key = probeKey(card, decision)
+    let all = Lampa.Storage.cache(keys.KEYS.probe, 100, {})
 
-    return Date.now() - time < FRESH_DAYS * 24 * 60 * 60 * 1000
+    delete all[key]
+
+    all[key] = {ok: ok, t: Date.now()}
+
+    Lampa.Storage.set(keys.KEYS.probe, all)
 }
 
 /**
@@ -270,13 +318,17 @@ function describe(card, done) {
             {next: card.next_episode_to_air}
         )
 
-        // дата выхода целевой серии нужна, чтобы понять, свежая ли она
-        if (!decision.air && decision.episode) {
+        if (decision.episode) {
             let target = list.find(
                 (ep) => ep.season_number === decision.season && ep.episode_number === decision.episode
             )
 
-            if (target) decision.air = target.air_date || null
+            // Сезон, который ещё догоняет эфир: раздачи с его сериями могут
+            // отставать. Серии нет в списке вовсе — список устарел, и она
+            // тем более на краю.
+            let last = list[list.length - 1]
+
+            decision.airing = !target || (!!last && decision.season === last.season_number)
         }
 
         done(decision)
@@ -362,22 +414,21 @@ function play(card, decision) {
 
     search(
         card,
-        (results, query) => {
-            let filter = cardFilter(card)
-            let params = {
-                season: decision.season,
-                episode: decision.episode,
-                no_cam: Lampa.Storage.field(keys.KEYS.no_cam) !== false,
-                last: lastRelease(card),
-                voice_rating: voiceRating(),
-                aliases: aliases(card, query)
-            }
-
-            let out = pick.pick(results, pick.context(card, filter, params))
-
+        evaluator(card, decision, {last: lastRelease(card), voice_rating: voiceRating()}),
+        (out, query) => {
             Lampa.Loading.stop()
 
-            if (!out.list.length) return nothingFound(card, out)
+            if (decision.episode) rememberProbe(card, decision, out.list.length > 0)
+
+            if (!out.list.length) {
+                let active = Lampa.Activity.active()
+
+                // подпись не должна обещать серию, которую только что не нашли
+                if (decision.episode && active && active.activity)
+                    show(card, active.activity.render(), decision)
+
+                return nothingFound(card, out)
+            }
 
             if (needAsk(card, out)) return choose(card, out, decision, query)
 
@@ -389,6 +440,30 @@ function play(card, decision) {
             notice('continue_error_search')
         }
     )
+}
+
+/**
+ * Отбор раздач под решение. Один на фоновую проверку и нажатие: разойдись они
+ * в фильтрах — подпись обещала бы то, чего кнопка потом не найдёт.
+ *
+ * @param {Object} [extra] - то, что нужно только для выбора лучшей: last, voice_rating
+ */
+function evaluator(card, decision, extra) {
+    let filter = cardFilter(card)
+
+    return (results, query) => {
+        let params = Object.assign(
+            {
+                season: decision.season,
+                episode: decision.episode,
+                no_cam: Lampa.Storage.field(keys.KEYS.no_cam) !== false,
+                aliases: aliases(card, query)
+            },
+            extra
+        )
+
+        return pick.pick(results, pick.context(card, filter, params))
+    }
 }
 
 /** Сколько названий пробуем, прежде чем признать, что раздач нет */
@@ -407,19 +482,25 @@ function aliases(card, query) {
 /**
  * Поиск раздач.
  *
- * Первым идёт запрос штатной кнопки торрентов — чтобы привычная выдача
- * оставалась привычной. Если он пуст, перебираем остальные названия тайтла:
- * трекерное название совпадает с названием карточки далеко не всегда, и без
- * перебора кнопка на таких сериалах просто мертва.
+ * Первым идёт запомненное название, за ним запрос штатной кнопки торрентов —
+ * чтобы привычная выдача оставалась привычной. Дальше остальные названия
+ * тайтла: трекерное название совпадает с названием карточки далеко не всегда,
+ * и без перебора кнопка на таких сериалах просто мертва.
  *
- * @param {Function} done - (results, query) — по какому названию нашлось
+ * Перебор идёт до первой выдачи, **из которой есть что запустить**, а не до
+ * первой непустой. Устаревшее название обычно что-то да находит — старые
+ * сезоны, чужой фильм-тёзку, — и остановка на нём прятала правильную выдачу
+ * за следующим названием навсегда.
+ *
+ * @param {Function} evaluate - (results, query) => результат pick.pick
+ * @param {Function} done - (out, query) — что выбрано и по какому названию; если
+ *                          подходящего нет нигде, приходит отбор первой непустой
+ *                          выдачи, чтобы объяснить почему
  */
-function search(card, done, fail) {
-    let rec = memory.get(card)
-
+function search(card, evaluate, done, fail) {
     let list = titles
         .candidates(card, {
-            remembered: rec && rec.q,
+            remembered: memory.searchName(card),
             parse_lang: Lampa.Storage.field('parse_lang'),
             lang: Lampa.Storage.field('language')
         })
@@ -428,11 +509,16 @@ function search(card, done, fail) {
     let title = card.title || card.name
     let original = card.original_title || card.original_name
     let index = 0
+    let fallback = null
 
     next()
 
     function next() {
-        if (index >= list.length) return done([], null)
+        if (index >= list.length) {
+            if (fallback) return done(fallback.out, fallback.query)
+
+            return done(evaluate([], null), null)
+        }
 
         let candidate = list[index++]
 
@@ -448,7 +534,13 @@ function search(card, done, fail) {
             (data) => {
                 let results = (data && data.Results) || []
 
-                if (results.length) return done(results, candidate.query)
+                if (results.length) {
+                    let out = evaluate(results, candidate.query)
+
+                    if (out.list.length) return done(out, candidate.query)
+
+                    if (!fallback) fallback = {out: out, query: candidate.query}
+                }
 
                 next()
             },
@@ -496,7 +588,8 @@ function lastRelease(card) {
     return {
         voice: voice.prefer(rec, Lampa.Storage.field('parse_lang')),
         resolution: rec.r || null,
-        hash: rec.h || null
+        hash: rec.h || null,
+        key: rec.d || null
     }
 }
 
@@ -530,14 +623,18 @@ function rememberRelease(card, cand, query) {
         v: cand.parsed.voices[0] || null,
         r: cand.parsed.resolution || null,
         // Сама раздача, а не приметы. Штатная пометка «открывали» общая на все
-        // тайтлы и без порядка, так что «ту самую» помним сами.
-        h: cand.raw.hash || null
+        // тайтлы и без порядка, так что «ту самую» помним сами. Хеш — это хеш
+        // заголовка и меняется с каждой новой серией, поэтому рядом ключ,
+        // который обновление раздачи переживает.
+        // Пустая строка, а не null: null запись не трогает, и от прошлой
+        // раздачи остался бы чужой признак, узнающий её как «ту самую».
+        h: cand.raw.hash || '',
+        d: cand.key || ''
     })
 
-    if (titles.worth(card, query, Lampa.Storage.field('parse_lang'))) {
-        memory.set(card, {q: query})
-        memory.clarify(card, query)
-    }
+    // Нашлось по обычному названию — запомненное прежде стирается: иначе оно
+    // стояло бы первым в каждом следующем поиске (см. store.query).
+    memory.query(card, query)
 
     countVoice(cand)
 }
@@ -811,6 +908,9 @@ function rememberVoice(card, cand) {
 }
 
 function launch(card, cand, decision, query) {
+    // свой запуск — не штатный, открытая там раньше раздача тут ни при чём
+    pending = null
+
     rememberRelease(card, cand, query)
 
     let want =

@@ -329,7 +329,7 @@ function followSearch() {
         try {
             let active = Lampa.Activity.active() || {}
 
-            if (active.component === 'torrents') rememberQuery(active.movie, active.search)
+            if (active.component === 'torrents') memory.query(active.movie, active.search)
         } catch (err) {
             console.error('Memory', 'remember error:', err)
         }
@@ -340,20 +340,12 @@ function applyQuery(object) {
     // человек уточняет название прямо сейчас — его выбор важнее запомненного
     if (!object || !object.movie || object.clarification) return
 
-    let rec = memory.get(object.movie)
-    let query = (rec && rec.q) || memory.lastClarify(object.movie)
+    let query = memory.searchName(object.movie)
 
     if (!query || query === object.search) return
 
     object.search = query
     object.clarification = true
-}
-
-function rememberQuery(card, query) {
-    if (!card || !titles.worth(card, query, Lampa.Storage.field('parse_lang'))) return
-
-    memory.set(card, {q: query})
-    memory.clarify(card, query)
 }
 
 /* ------------------------------------------------------------------ общее */

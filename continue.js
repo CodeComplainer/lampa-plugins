@@ -56,150 +56,6 @@
     };
 
     /**
-     * Память по тайтлу: как этот сериал или фильм смотрели в прошлый раз.
-     *
-     * Одна запись на карточку вместо разрозненных ключей — название для поиска,
-     * студия, качество и аудиодорожка живут вместе, потому что нужны вместе:
-     * запустить «как в прошлый раз» — это все четыре сразу.
-     *
-     * Хранилище задаётся снаружи, чтобы логику вытеснения можно было проверить
-     * тестами без запущенного приложения.
-     */
-
-    var KEY = keys.KEYS.watch;
-
-    /**
-     * Сколько тайтлов помним.
-     *
-     * Хранить всё незачем: смысл памяти в том, чтобы человек, вернувшийся
-     * к сериалу, попал в привычные настройки. Запись — около сотни байт,
-     * так что потолок упирается в разумные ~20 КБ и дальше не растёт.
-     */
-    var LIMIT = 200;
-
-    /** Сколько запросов на карточку оставляем в штатном списке уточнения */
-    var CLARIFY_KEEP = 5;
-
-    /**
-     * Ключ — карточка целиком, а не отдельная серия: и озвучку, и название
-     * для поиска выбирают на сериал, а не на каждый эпизод.
-     */
-    function cardID$1(card) {
-      if (!card || !card.id) return null;
-      var tv = card.number_of_seasons || card.original_name || card.first_air_date;
-      return card.id + ':' + (tv ? 'tv' : 'movie');
-    }
-
-    /**
-     * @param {Object} storage - Lampa.Storage или его подмена в тестах
-     */
-    function create(storage) {
-      function all() {
-        return storage.cache(KEY, LIMIT, {});
-      }
-
-      /**
-       * Storage.cache вытесняет по порядку вставки, а не по обращению, поэтому
-       * запись перекладывается в конец при каждом использовании — иначе давно
-       * заведённый, но активно смотримый сериал вытеснился бы первым.
-       */
-      function touch(map, key) {
-        var keys = Object.keys(map);
-
-        // уже последняя — переписывать хранилище незачем
-        if (keys[keys.length - 1] === key) return;
-        var rec = map[key];
-        delete map[key];
-        map[key] = rec;
-        storage.set(KEY, map);
-      }
-
-      /**
-       * @returns {{q: string, v: string, r: number, a: {l: string, n: string}, t: number}|null}
-       *
-       * q — название, по которому нашлись раздачи
-       * v — студия озвучки
-       * r — разрешение
-       * a — аудиодорожка: язык и название
-       * t — когда запись трогали в последний раз
-       */
-      function get(card) {
-        var key = cardID$1(card);
-        if (!key) return null;
-        var map = all();
-        var rec = map[key];
-        if (!rec) return null;
-        touch(map, key);
-        return rec;
-      }
-      function set(card, patch) {
-        var key = cardID$1(card);
-        if (!key || !patch) return null;
-        var map = all();
-        var rec = map[key] || {};
-        Object.keys(patch).forEach(function (name) {
-          if (patch[name] !== undefined && patch[name] !== null) rec[name] = patch[name];
-        });
-        rec.t = patch.t || Date.now();
-        delete map[key];
-        map[key] = rec;
-        storage.set(KEY, map);
-        return rec;
-      }
-
-      /**
-       * Продублировать рабочее название в штатный список уточнения.
-       *
-       * Ключ `user_clarifys` синхронизируется через CUB и читается обычным экраном
-       * торрентов ([filter.js:36](src/interaction/filter.js:36)), поэтому название
-       * всплывает первым и на другом устройстве — короче становится и нативный путь,
-       * а не только наша кнопка.
-       *
-       * Свою карточку заодно подрезаем: штатный код дописывает туда запросы
-       * вообще без ограничения.
-       */
-      function clarify(card, query, keep) {
-        if (!card || !card.id || !query) return;
-        var all = storage.get('user_clarifys', '{}') || {};
-        var list = (all[card.id] || []).filter(function (item) {
-          return item !== query;
-        });
-        list.push(query);
-        all[card.id] = list.slice(-(keep || CLARIFY_KEEP));
-        storage.set('user_clarifys', all);
-      }
-
-      /**
-       * Последнее название, которое человек вводил руками на экране торрентов.
-       *
-       * Своей записи может не быть: в память название попадает по факту запуска
-       * файла, а уточнить поиск и уйти, ничего не включив, — обычное дело.
-       * Штатный список при этом уже всё запомнил, и не воспользоваться этим
-       * значит заставить человека уточнять поиск заново.
-       */
-      function lastClarify(card) {
-        if (!card || !card.id) return null;
-        var list = (storage.get('user_clarifys', '{}') || {})[card.id] || [];
-        return list[list.length - 1] || null;
-      }
-      return {
-        get: get,
-        set: set,
-        clarify: clarify,
-        lastClarify: lastClarify,
-        cardID: cardID$1,
-        KEY: KEY,
-        LIMIT: LIMIT
-      };
-    }
-    var store = {
-      create: create,
-      cardID: cardID$1,
-      KEY: KEY,
-      LIMIT: LIMIT
-    };
-
-    /**
      * Названия, по которым имеет смысл искать раздачи.
      *
      * Название карточки и трекерное название совпадают далеко не всегда: корейский
@@ -316,6 +172,189 @@
       primary: primary,
       alternatives: alternatives,
       worth: worth
+    };
+
+    /**
+     * Память по тайтлу: как этот сериал или фильм смотрели в прошлый раз.
+     *
+     * Одна запись на карточку вместо разрозненных ключей — название для поиска,
+     * студия, качество и аудиодорожка живут вместе, потому что нужны вместе:
+     * запустить «как в прошлый раз» — это все четыре сразу.
+     *
+     * Хранилище задаётся снаружи, чтобы логику вытеснения можно было проверить
+     * тестами без запущенного приложения.
+     */
+
+    var KEY = keys.KEYS.watch;
+
+    /**
+     * Сколько тайтлов помним.
+     *
+     * Хранить всё незачем: смысл памяти в том, чтобы человек, вернувшийся
+     * к сериалу, попал в привычные настройки. Запись — около сотни байт,
+     * так что потолок упирается в разумные ~20 КБ и дальше не растёт.
+     */
+    var LIMIT = 200;
+
+    /** Сколько запросов на карточку оставляем в штатном списке уточнения */
+    var CLARIFY_KEEP = 5;
+
+    /**
+     * Ключ — карточка целиком, а не отдельная серия: и озвучку, и название
+     * для поиска выбирают на сериал, а не на каждый эпизод.
+     */
+    function cardID$1(card) {
+      if (!card || !card.id) return null;
+      var tv = card.number_of_seasons || card.original_name || card.first_air_date;
+      return card.id + ':' + (tv ? 'tv' : 'movie');
+    }
+
+    /**
+     * @param {Object} storage - Lampa.Storage или его подмена в тестах
+     */
+    function create(storage) {
+      function all() {
+        return storage.cache(KEY, LIMIT, {});
+      }
+
+      /**
+       * Storage.cache вытесняет по порядку вставки, а не по обращению, поэтому
+       * запись перекладывается в конец при каждом использовании — иначе давно
+       * заведённый, но активно смотримый сериал вытеснился бы первым.
+       */
+      function touch(map, key) {
+        var keys = Object.keys(map);
+
+        // уже последняя — переписывать хранилище незачем
+        if (keys[keys.length - 1] === key) return;
+        var rec = map[key];
+        delete map[key];
+        map[key] = rec;
+        storage.set(KEY, map);
+      }
+
+      /**
+       * @returns {{q: string, v: string, r: number, a: {l: string, n: string}, t: number}|null}
+       *
+       * q — название, по которому нашлись раздачи; пустая строка — «ищем по
+       *     названию карточки», запомненное прежде оказалось лишним
+       * v — студия озвучки
+       * r — разрешение
+       * h — хеш заголовка запущенной раздачи
+       * d — ключ той же раздачи, переживающий её обновление (новые серии)
+       * a — аудиодорожка: язык и название
+       * t — когда запись трогали в последний раз
+       */
+      function get(card) {
+        var key = cardID$1(card);
+        if (!key) return null;
+        var map = all();
+        var rec = map[key];
+        if (!rec) return null;
+        touch(map, key);
+        return rec;
+      }
+      function set(card, patch) {
+        var key = cardID$1(card);
+        if (!key || !patch) return null;
+        var map = all();
+        var rec = map[key] || {};
+        Object.keys(patch).forEach(function (name) {
+          if (patch[name] !== undefined && patch[name] !== null) rec[name] = patch[name];
+        });
+        rec.t = patch.t || Date.now();
+        delete map[key];
+        map[key] = rec;
+        storage.set(KEY, map);
+        return rec;
+      }
+
+      /**
+       * Поправить свою карточку в штатном списке уточнения.
+       *
+       * Ключ `user_clarifys` синхронизируется через CUB и читается обычным экраном
+       * торрентов ([filter.js:36](src/interaction/filter.js:36)), поэтому рабочее
+       * название всплывает первым и на другом устройстве — короче становится и
+       * нативный путь, а не только наша кнопка. Свою карточку заодно подрезаем:
+       * штатный код дописывает туда запросы вообще без ограничения.
+       *
+       * @param {Function} edit - (list) => новый список
+       */
+      function clarifys(card, edit) {
+        var all = storage.get('user_clarifys', '{}') || {};
+        var list = all[card.id] || [];
+        all[card.id] = edit(list).slice(-CLARIFY_KEEP);
+        storage.set('user_clarifys', all);
+      }
+
+      /**
+       * Название, по которому нашлась запущенная раздача.
+       *
+       * Нестандартное запоминаем и ставим последним в штатный список уточнения.
+       * Если нашлось по обычному названию карточки, прежнее запомненное стираем —
+       * и из списка тоже, — а в `q` пишем пустую строку: «ищем по названию
+       * карточки». Иначе устаревшее название стояло бы первым в каждом следующем
+       * поиске, хотя человек давно ищет иначе.
+       */
+      function query(card, value) {
+        if (!card || !card.id || !value) return;
+        if (titles.worth(card, value, storage.field('parse_lang'))) {
+          set(card, {
+            q: value
+          });
+          clarifys(card, function (list) {
+            return list.filter(function (item) {
+              return item !== value;
+            }).concat(value);
+          });
+          return;
+        }
+        var rec = get(card);
+        if (!rec || !rec.q) return;
+        var stale = rec.q;
+        clarifys(card, function (list) {
+          return list.filter(function (item) {
+            return item !== stale;
+          });
+        });
+        set(card, {
+          q: ''
+        });
+      }
+
+      /**
+       * По какому названию искать эту карточку, если не по её собственному.
+       *
+       * Запомненное по факту запуска — первым. Своей записи может не быть: уточнить
+       * поиск и уйти, ничего не включив, — обычное дело, а штатный список при этом
+       * уже всё запомнил, и не воспользоваться этим значит заставить человека
+       * уточнять заново. Пустое `q` — прошлый запуск нашёлся по названию карточки,
+       * и старые уточнения тут не к месту.
+       *
+       * @returns {string|null}
+       */
+      function searchName(card) {
+        if (!card || !card.id) return null;
+        var rec = get(card);
+        if (rec && typeof rec.q === 'string') return rec.q || null;
+        var list = (storage.get('user_clarifys', '{}') || {})[card.id] || [];
+        return list[list.length - 1] || null;
+      }
+      return {
+        get: get,
+        set: set,
+        query: query,
+        searchName: searchName,
+        cardID: cardID$1,
+        KEY: KEY,
+        LIMIT: LIMIT
+      };
+    }
+    var store = {
+      create: create,
+      cardID: cardID$1,
+      KEY: KEY,
+      LIMIT: LIMIT
     };
 
     var Voices = ["Анастасия Гайдаржи + Андрей Юрченко", "Студии Суверенного Лепрозория", "Студия Пиратского Дубляжа", "IgVin &amp; Solncekleshka", "Gremlin Creative Studio", "Alternative Production", "HelloMickey Production", "Bubble Dubbing Company", "Н.Севастьянов seva1988", "XDUB Dorama + Колобок", "Мобильное телевидение", "СПД - Сладкая парочка", "Selena International", "Black Street Records", "Intra Communications", "BBC Saint-Petersburg", "Melodic Voice Studio", "Voice Project Studio", "Несмертельное оружие", "Петербургский дубляж", "Studio Victory Аsia", "Asian Miracle Group", "True Dubbing Studio", "Lizard Cinema Trade", "National Geographic", "Позитив-Мультимедиа", "Премьер Мультимедиа", "Уолт Дисней Компани", "Parovoz Production", "Shadow Dub Project", "Zone Vision Studio", "Анастасия Гайдаржи", "The Kitchen Russia", "Малиновский Сергей", "Family Fan Edition", "Paramount Pictures", "Иванова и П. Пашут", "Так Треба Продакшн", "Хихикающий доктор", "Четыре в квадрате", "Project Web Mania", "Paramount Channel", "Back Board Cinema", "Zoomvision Studio", "Universal Channel", "RedDiamond Studio", "НеЗупиняйПродакшн", "Селена Интернешнл", "Студия «Стартрек»", "Колодій Трейлерів", "Universal Russia", "Paramount Comedy", "Андрей Питерский", "Реальный перевод", "MC Entertainment", "Екатеринбург Арт", "Lucky Production", "Cowabunga Studio", "Анатолий Ашмарин", "Васька Куролесов", "Brain Production", "Квадрат Малевича", "Первый канал ОРТ", "Русский Репортаж", "Сolumbia Service", "Sunshine Studio", "GreenРай Studio", "New Dream Media", "DeadLine Studio", "Воробьев Сергей", "DeeAFilm Studio", "Николай Дроздов", "Денис Шадинский", "Cartoon Network", "Amazing Dubbing", "Volume-6 Studio", "Антонов Николай", "Ульпаней Эльром", "Cinema Prestige", "AnimeSpace Team", "CinemaSET GROUP", "XvidClub Studio", "З Ранку До Ночі", "Максим Логинофф", "Студия Горького", "Ушастая озвучка", "Hamster Studio", "Agatha Studdio", "SunshineStudio", "Kulzvuk Studio", "Вартан Дохалов", "Viasat History", "DIVA Universal", "KosharaSerials", "Julia Prosenuk", "SovetRomantica", "Mallorn Studio", "TUMBLER Studio", "CrazyCatStudio", "Syfy Universal", "Horizon Studio", "Анатолий Гусев", "Максим Жолобов", "RedRussian1337", "Creative Sound", "Garsu Pasaulis", "visanti-vasaer", "GoodTime Media", "Кирдин | Stalk", "Anything-group", "Goodtime Media", "Jakob Bellmann", "Витя «говорун»", "Л. Володарский", "Леша Прапорщик", "Медиа-Комплекс", "Прайд Продакшн", "Русский дубляж", "Союзмультфильм", "Студия Колобок", "Red Head Sound", "LE-Production", "ViruseProject", "Victory-Films", "Jetvis Studio", "Greb&Creative", "5-й канал СПб", "Dream Records", "Filiza Studio", "SHIZA Project", "Bars MacAdams", "Nazel & Freya", "Vulpes Vulpes", "Храм Дорам ТВ", "АРК-ТВ Studio", "Film Prestige", "Rainbow World", "Banyan Studio", "Bonsai Studio", "Мадлен Дюваль", "VO-Production", "Voice Project", "Flarrow Films", "Видеопродакшн", "Хоррор Мэйкер", "Lizard Cinema", "Фортуна-Фильм", "VIP Serial HD", "Старый Бильбо", "Семыкина Юлия", "Штамп Дмитрий", "Arasi project", "ARRU Workshop", "Byako Records", "FiliZa Studio", "Gezell Studio", "HamsterStudio", "PCB Translate", "Renegade Team", "Sci-Fi Russia", "The Mike Rec.", "VO-production", "Мика Бондарик", "Наталья Гурзо", "Премьер Видео", "Трамвай-фильм", "Кубик в Кубе", "Кураж-Бамбей", "Первый канал", "Trdlo.studio", "Студия Райдо", "AniLibria.TV", "RG.Paravozik", "Profix Media", "AlphaProject", "AnimeReactor", "Кармен Видео", "Korean Craze", "Sony Channel", "Train Studio", "Фильмэкспорт", "Кирилл Сагач", "ViP Premiere", "Деваль Видео", "RussianGuy27", "HaseRiLLoPaW", "Сергей Дидок", "Mystery Film", "Psychotronic", "КонтентикOFF", "Говинда Рага", "Horror Maker", "Альтера Парс", "Видеоимпульс", "Мьюзик-трейд", "Тоникс Медиа", "Элегия фильм", "Oneinchnales", "Кинопремьера", "A. Lazarchuk", "Animereactor", "BadCatStudio", "DreamRecords", "General Film", "Ivnet Cinema", "RG Paravozik", "sweet couple", "VictoryFilms", "VulpesVulpes", "Wayland team", "Гей Кино Гид", "Нурмухаметов", "Е. Хрусталёв", "К. Поздняков", "Н. Золотухин", "Новый Дубляж", "Р. Янкелевич", "С. Кузьмичёв", "С. Щегольков", "Синема Трейд", "Синта Рурони", "Точка Zрения", "КОМНАТА ДИДИ", "FocusStudio", "Gears Media", "GladiolusTV", "RecentFilms", "NEON Studio", "Володарский", "Мастер Тэйп", "XDUB Dorama", "Sound-Group", "Sony Sci-Fi", "Good People", "JWA Project", "Nika Lenina", "RiZZ_fisher", "New Records", "КураСгречей", "Неоклассика", "CrezaStudio", "Видеосервис", "BTI Studios", "Eurochannel", "Варус-Видео", "HiWay Grope", "Эй Би Видео", "Nickelodeon", "StudioFilms", "Paul Bunyan", "Inter Video", "Franek Monk", "Другое кино", "Севастьянов", "Lazer Video", "Max Nabokov", "Завгородний", "SnowRecords", "Crunchyroll", "Gold Cinema", "Прямостанов", "Огородников", "Кенс Матвей", "1001 cinema", "Cactus Team", "Description", "DVD Classic", "Gala Voices", "hungry_inri", "Neoclassica", "Oghra-Brown", "Rebel Voice", "Saint Sound", "SakuraNight", "TF-AniGroup", "TrainStudio", "Zone Studio", "Zone Vision", "Варус Видео", "Г. Либергал", "Г. Румянцев", "Е. Гаевский", "И. Сафронов", "И. Степанов", "Лазер Видео", "Малиновский", "Новый Канал", "Петербуржец", "С. Визгунов", "С. Кузнецов", "Студия Трёх", "Цікава Ідея", "Я. Беллманн", "Studio Band", "ApofysTeam", "Карповский", "LevshaFilm", "1001cinema", "CP Digital", "Интерфильм", "Комедия ТВ", "Ох! Студия", "SilverSnow", "NewStation", "StudioBand", "Rain Death", "Первый ТВЧ", "HiWayGrope", "Animegroup", "Shachiburi", "CactusTeam", "Sony Turbo", "AXN Sci-Fi", "Т.О Друзей", "West Video", "East Dream", "Sound Film", "MaxMeister", "VoicePower", "CoralMedia", "VSI Moscow", "VGM Studio", "Студия NLS", "Хуан Рохас", "TatamiFilm", "диктор CDV", "Pazl Voice", "Саня Белый", "Мост-Видео", "AimaksaLTV", "Contentica", "Инфо-фильм", "Электричка", "Бусов Глеб", "AvePremier", "BraveSound", "CinemaTone", "DniproFilm", "ELEKTRI4KA", "eraserhead", "Fox Russia", "Mega-Anime", "MifSnaiper", "Nice-Media", "PiratVoice", "Postmodern", "Reanimedia", "Sky Voices", "SkyeFilmTV", "Костюкевич", "Толстобров", "Б. Федоров", "Ващенко С.", "Глуховский", "Держиморда", "Е. Гранкин", "И. Еремеев", "К. Филонов", "Мост Видео", "Н. Антонов", "Н. Дроздов", "Новый диск", "Переводман", "С. Казаков", "С. Лебедев", "С. Макашов", "Союз Видео", "ТВ XXI век", "Ю. Немахов", "Dream Cast", "Причудики", "NewStudio", "Red Media", "Синема УС", "SDI Media", "CasStudio", "turok1990", "HighHopes", "AniLibria", "FanStudio", "Sedorelli", "Flux-Team", "Kobayashi", "KinoGolos", "Fox Crime", "Discovery", "GREEN TEA", "Persona99", "3df voice", "ShinkaDan", "АрхиТеатр", "СВ-Студия", "FilmsClub", "fiendover", "Воротилин", "LakeFilms", "Кириллица", "AniPLague", "JoyStudio", "Формат AB", "AveBrasil", "Невафильм", "OnisFilms", "Neo-Sound", "Муравский", "BeniAffet", "Янкелевич", "AveDorama", "Киномания", "CBS Drama", "Novamedia", "NewComers", "Ghostface", "Sephiroth", "Andre1288", "DoubleRec", "Astana TV", "Останкино", "Видеобаза", "CLS Media", "Seoul Bay", "Хрусталев", "Золотухин", "Videogram", "AAA-Sound", "Epic Team", "GoodVideo", "Gramalant", "INTERFILM", "Kinomania", "No-Future", "RainDeath", "RATTLEBOX", "Sawyer888", "SmallFilm", "SOLDLUCK2", "SpaceDust", "Timecraft", "Total DVD", "Video-BIZ", "VIZ Media", "Васильцев", "Григорьев", "ААА-sound", "Амальгама", "Весельчак", "Деньщиков", "Шадинский", "ЕА Синема", "Зереницын", "И. Клушин", "Имидж-Арт", "Карапетян", "Машинский", "Мительман", "Рыжий пес", "С. Дьяков", "Самарский", "СВ Студия", "Советский", "Солодухин", "ТО Друзей", "Ю. Сербин", "Ю. Товбин", "AnimeVost", "Omskbird", "LostFilm", "AlexFilm", "IdeaFilm", "ColdFilm", "KinoView", "Jimmy J.", "Дольский", "Гаврилов", "Алексеев", "Визгунов", "Либергал", "Кузнецов", "Горчаков", "Gravi-TV", "Murzilka", "STEPonee", "NovaFilm", "Kerems13", "Fox Life", "AzOnFilm", "SorzTeam", "Гаевский", "СВ-Дубль", "GoldTeam", "DexterTV", "AniMedia", "ANIvoice", "JeFerSon", "RealFake", "AniMaunt", "TurkStar", "Медведев", "FilmGate", "Логинофф", "Loginoff", "Animedub", "GostFilm", "ClubFATE", "Hallmark", "Тимофеев", "Дьяконов", "Лексикон", "Superbit", "VideoBIZ", "WestFilm", "kubik&ko", "Марченко", "Журавлев", "Карусель", "Barin101", "Amalgama", "Кинолюкс", "AB-Video", "Пирамида", "Нарышкин", "Дубровин", "Махонько", "Хлопушка", "АрхиАзия", "Ultradox", "Мельница", "Бессонов", "Бахурани", "Индия ТВ", "AdiSound", "ALEKS KV", "AuraFilm", "DeadLine", "Extrabit", "Foxlight", "GetSmart", "ImageArt", "Marclail", "metalrus", "Milirina", "MiraiDub", "MOYGOLOS", "OMSKBIRD", "Radamant", "RoxMarty", "st.Elrom", "VashMax2", "VendettA", "XL Media", "Артемьев", "Васильев", "Савченко", "Воронцов", "Войсовер", "Домашний", "Е. Лурье", "Е. Рудой", "Ист-Вест", "ЛанселаП", "Ленфильм", "Заугаров", "Мосфильм", "Оверлорд", "С. Рябов", "Супербит", "Толмачев", "Ю. Живов", "Paradox", "BaibaKo", "Jaskier", "Колобок", "Михалев", "Дохалов", "SoftBox", "MUZOBOZ", "ZM-Show", "Levelin", "Немахов", "Яроцкий", "BadBajo", "СВ-Кадр", "Позитив", "RusFilm", "Назаров", "Сыендук", "Яковлев", "Lord32x", "Onibaku", "Trina_D", "Hamster", "AniFilm", "HDrezka", "ShowJet", "BukeDub", "SomeWax", "Anifilm", "TVShows", "РуФилмс", "Пифагор", "AniStar", "Netflix", "Octopus", "MixFilm", "Рутилов", "Elysium", "FireDub", "AveTurk", "Багичев", "Дасевич", "Twister", "Морозов", "Sam2007", "SesDizi", "AnyFilm", "Urasiko", "Wakanim", "Латышев", "Ващенко", "Сонотек", "Никитин", "Сонькин", "Кипарис", "Королёв", "RUSCICO", "Филонов", "Ошурков", "Герусов", "Пятница", "5 канал", "Amalgam", "Anistar", "AniWayt", "datynet", "DeadSno", "Eladiel", "ELYSIUM", "F-TRAIN", "FoxLife", "Janetta", "Kолобок", "LeDoyen", "Liga HQ", "lord666", "Macross", "McElroy", "NemFilm", "OpenDub", "PashaUp", "SOFTBOX", "To4kaTV", "TV 1000", "VicTeam", "ZM-SHOW", "Клюквин", "Матвеев", "Смирнов", "Бибиков", "Абдулов", "Данилов", "sf@irat", "Королев", "Люсьена", "Омикрон", "Парадиз", "Пепелац", "Синхрон", "Сокуров", "Хихидок", "AniBaza", "Ozz.tv", "Сербин", "Кравец", "SNK-TV", "Amedia", "Гоблин", "Kiitos", "Есарев", "Санаев", "Шварко", "Карцев", "Кашкин", "Мудров", "Иванов", "Котова", "Kansai", "ZEE TV", "AniDUB", "Ancord", "Berial", "Cuba77", "OSLIKt", "Tycoon", "Курдов", "Кошкин", "Stevie", "Лагута", "Кондор", "Киреев", "FocusX", "Пронин", "neko64", "Shaman", "GalVid", "D.I.M.", "Н-Кино", "Товбин", "binjak", "Акцент", "Козлов", "Нева-1", "Milvus", "Готлиб", "Zerzia", "Дьяков", "Вольга", "Строев", "Alezan", "ДиоНиК", "Стасюк", "TV1000", "NewDub", "Набиев", "Светла", "Nastia", "Emslie", "100 ТВ", "4u2ges", "Azazel", "BD CEE", "Boльгa", "den904", "Elegia", "Gemini", "Jetvis", "JimmyJ", "KANSAI", "kiitos", "L0cDoG", "LeXiKC", "Lisitz", "madrid", "Mikail", "MrRose", "Ozz TV", "Prolix", "RedDog", "Rumble", "Satkur", "Selena", "Suzaku", "WiaDUB", "WVoice", "Zendos", "Агапов", "Акопян", "Шуваев", "АБыГДе", "Акалит", "Альянс", "Анубис", "Anubis", "Арк-ТВ", "Бойков", "Вихров", "Векшин", "Гризли", "Гундос", "Пучков", "Живаго", "Жучков", "Зебуро", "Килька", "Лапшин", "Лизард", "Миняев", "НЕВА 1", "НЛО-TV", "Ракурс", "Россия", "С.Р.И.", "KOleso", "Гуртом", "ТВ СПб", "Швецов", "OnWave", "DZUSKI", "Kerob", "To4ka", "Чадов", "Живов", "ВГТРК", "Elrom", "Игмар", "Котов", "РенТВ", "Рыбин", "Ozeon", "Cmert", "Штейн", "zamez", "Гланц", "Белов", "Anika", "Lupin", "Ryc99", "ko136", "Рябов", "Amber", "Arisu", "DeMon", "Велес", "Акира", "Ворон", "Рудой", "С.Р.И", "Лайко", "D2Lab", "Jetix", "Попов", "Хабар", "Интер", "AniUA", "D2lab", "erogg", "IНТЕР", "JetiX", "PaDet", "RinGo", "seqw0", "SHIZA", "Solod", "ssvss", "Мишин", "АнВад", "Бигыч", "Рукин", "Штамп", "Новий", "Перец", "Райдо", "ТВЧ 1", "Laci", "ETV+", "Vano", "Jade", "RAIM", "Andy", "Нота", "Твин", "ИДДК", "Voiz", "CPIG", "Dice", "Gits", "ICTV", "jept", "KIHO", "Line", "SGEV", "Tori", "Troy", "Twix", "Чуев", "Инис", "Ирэн", "ТВ-3", "ТВИН", "ДТВ", "FOX", "НТВ", "СТС", "ICG", "ТВЦ", "2x2", "MTV", "Oni", "JAM", "AMS", "DDV", "AMC", "НСТ", "IVI", "КТК", "Че!", "MGM", "МИР", "ТНТ", "FDV", "ТВ3", "LDV", "1+1", "2+2", "2х2", "AOS", "CDV", "MCA", "QTV", "TB5", "VHS", "АМС", "ГКГ", "ИГМ", "НТН", "РТР", "ТВ6", "ТРК", "UKR", "D1", "R5", "К9"];
@@ -446,7 +485,7 @@
      * @param {string} title - название раздачи
      * @returns {{source: string, is_cam: boolean, source_rank: number, resolution: number|null,
      *            hdr: boolean, dv: boolean, season: number|null, seasons: number[],
-     *            episodes: number[]|null, year: number|null, voices: string[], langs: string[]}}
+     *            episodes: number[]|null, stem: string, year: number|null, voices: string[], langs: string[]}}
      */
     function parse(title) {
       var raw = (title || '') + '';
@@ -462,6 +501,7 @@
         season: detectSeason(norm),
         seasons: detectSeasons(norm),
         episodes: detectEpisodes(norm),
+        stem: stripEpisodes(norm),
         year: detectYear(norm),
         voices: detectVoices(raw),
         langs: detectLangs(norm)
@@ -568,38 +608,77 @@
     }
 
     /**
+     * Как в названиях пишут серии. Одна грамматика на два вопроса: какие серии
+     * в раздаче (detectEpisodes) и как выглядит заголовок без них (stripEpisodes).
+     * Порядок важен: диапазон разбирается раньше одиночной серии.
+     *
+     * range(m) — [от, до] по совпадению.
+     */
+    var EPISODE_PATTERNS = [{
+      re: /\b\d{1,2}x(\d{1,3})(?:\s*-\s*(\d{1,3}))?/,
+      range: function range(m) {
+        return [m[1], m[2] || m[1]];
+      }
+    }, {
+      re: /\bs\d{1,2}e(\d{1,3})(?:\s*-\s*(?:e)?(\d{1,3}))?/,
+      range: function range(m) {
+        return [m[1], m[2] || m[1]];
+      }
+    },
+    // 'E1-12' без сезона — так подписывают аниме и дорамы
+    {
+      re: /(?:^|[^a-zа-яё0-9])e(\d{1,3})\s*-\s*(?:e)?(\d{1,3})\b/,
+      range: function range(m) {
+        return [m[1], m[2]];
+      }
+    },
+    // одиночная серия; диапазон уже разобран шаблоном выше
+    {
+      re: /(?:^|[^a-zа-яё0-9])e(\d{1,3})\b/,
+      range: function range(m) {
+        return [m[1], m[1]];
+      }
+    }, {
+      re: /(\d{1,3})\s*-\s*(\d{1,3})\s*(?:сери|эп|из|of)/,
+      range: function range(m) {
+        return [m[1], m[2]];
+      }
+    }, {
+      re: /(\d{1,3})\s*сери/,
+      range: function range(m) {
+        return [m[1], m[1]];
+      }
+    },
+    // «5 из 13 эп.», «12 of 24», «4 из ?» — сколько серий уже вышло
+    {
+      re: /(\d{1,3})\s*(?:из|of)\s*(?:\d{1,3}|\?)/,
+      range: function range(m) {
+        return [1, m[1]];
+      }
+    }];
+
+    /**
      * Серии. Возвращаем [от, до] — одиночная серия становится [5,5].
      */
     function detectEpisodes(norm) {
-      var m;
-      if (m = norm.match(/\b\d{1,2}x(\d{1,3})(?:\s*-\s*(\d{1,3}))?/)) {
-        return [parseInt(m[1], 10), parseInt(m[2] || m[1], 10)];
-      }
-      if (m = norm.match(/\bs\d{1,2}e(\d{1,3})(?:\s*-\s*(?:e)?(\d{1,3}))?/)) {
-        return [parseInt(m[1], 10), parseInt(m[2] || m[1], 10)];
-      }
-
-      // 'E1-12' без сезона — так подписывают аниме и дорамы
-      if (m = norm.match(/(?:^|[^a-zа-яё0-9])e(\d{1,3})\s*-\s*(?:e)?(\d{1,3})\b/)) {
-        return [parseInt(m[1], 10), parseInt(m[2], 10)];
-      }
-
-      // одиночная серия; диапазон уже разобран шаблоном выше
-      if (m = norm.match(/(?:^|[^a-zа-яё0-9])e(\d{1,3})\b/)) {
-        return [parseInt(m[1], 10), parseInt(m[1], 10)];
-      }
-      if (m = norm.match(/(\d{1,3})\s*-\s*(\d{1,3})\s*(?:сери|эп|из|of)/)) {
-        return [parseInt(m[1], 10), parseInt(m[2], 10)];
-      }
-      if (m = norm.match(/(\d{1,3})\s*сери/)) {
-        return [parseInt(m[1], 10), parseInt(m[1], 10)];
-      }
-
-      // «5 из 13 эп.», «12 of 24», «4 из ?» — сколько серий уже вышло
-      if (m = norm.match(/(\d{1,3})\s*(?:из|of)\s*(?:\d{1,3}|\?)/)) {
-        return [1, parseInt(m[1], 10)];
+      for (var i = 0; i < EPISODE_PATTERNS.length; i++) {
+        var pattern = EPISODE_PATTERNS[i];
+        var m = norm.match(pattern.re);
+        if (m) return pattern.range(m).map(function (n) {
+          return parseInt(n, 10);
+        });
       }
       return null;
+    }
+
+    /**
+     * Заголовок без номеров серий — то, что у раздачи не меняется, когда
+     * в неё добавляют новую серию: «1-5 из 10» и «1-6 из 10» дают одно и то же.
+     */
+    function stripEpisodes(norm) {
+      return EPISODE_PATTERNS.reduce(function (str, pattern) {
+        return str.replace(new RegExp(pattern.re.source, 'g'), ' # ');
+      }, norm).replace(/\s+/g, ' ').trim();
     }
 
     /**
@@ -657,8 +736,22 @@
       480: 1
     };
 
-    /** Порядок ослабления фильтров, когда после отсечек не осталось никого */
-    var RELAX_ORDER = ['voice', 'dv', 'hdr', 'sub', 'quality'];
+    /**
+     * Сколько раздающих нужно, чтобы раздача реально играла.
+     *
+     * Мёртвые (ноль) отсекаются всегда, но и один-два раздающих на стриминге
+     * почти всегда означают вечную буферизацию: торрент поднимается, а серия не
+     * идёт. Поэтому слабые отсекаются как любой другой фильтр — и так же
+     * возвращаются последним ослаблением, когда больше играть нечего.
+     */
+    var MIN_SEEDERS = 5;
+
+    /**
+     * Порядок ослабления фильтров, когда после отсечек не осталось никого.
+     * Слабые раздачи — последними: предпочтения можно нарушить, а раздача,
+     * которая не играет, не нужна ни с какой озвучкой.
+     */
+    var RELAX_ORDER = ['voice', 'dv', 'hdr', 'sub', 'quality', 'seeders'];
 
     /** Разрешения фильтра Lampa в числа */
     var FILTER_QUALITY = {
@@ -687,7 +780,8 @@
         seeders: parseInt(result.Seeders, 10) || 0,
         size: parseInt(result.Size, 10) || 0,
         viewed: !!result.viewed,
-        parsed: parsed
+        parsed: parsed,
+        key: releaseKey(result, parsed)
       };
     }
 
@@ -735,6 +829,7 @@
 
         // мёртвая раздача бесполезна, каким бы ни было качество
         if (!cand.seeders) return false;
+        if (relax.indexOf('seeders') === -1 && cand.seeders < MIN_SEEDERS) return false;
         if (!isSameTitle(cand, ctx)) return false;
         if (ctx.no_cam && p.is_cam) return false;
 
@@ -743,7 +838,7 @@
 
         // Как и нужная серия. Раздача «серии 1-2», когда нужна четвёртая,
         // бесполезна — предлагать её незачем.
-        if (ctx.episode && p.episodes && !hasEpisode(cand, ctx)) return false;
+        if (ctx.episode && !hasEpisode(cand, ctx)) return false;
         if (relax.indexOf('quality') === -1 && ctx.max_resolution && p.resolution) {
           if (p.resolution > ctx.max_resolution) return false;
         }
@@ -803,10 +898,15 @@
       return s;
     }
 
-    /** Раздача содержит нужную серию */
+    /**
+     * Раздача содержит нужную серию — насколько об этом говорит заголовок.
+     * Диапазона серий нет («Сезон 2») — обычно это целый сезон, и серия в нём есть.
+     */
     function hasEpisode(cand, ctx) {
-      if (!ctx.episode || !cand.parsed.episodes) return false;
-      return ctx.episode >= cand.parsed.episodes[0] && ctx.episode <= cand.parsed.episodes[1];
+      var range = cand.parsed.episodes;
+      if (!ctx.episode) return false;
+      if (!range) return true;
+      return ctx.episode >= range[0] && ctx.episode <= range[1];
     }
 
     /**
@@ -829,13 +929,40 @@
     /**
      * Та самая раздача, которую запускали по этому тайтлу в прошлый раз.
      *
-     * Опознаём по хешу из выдачи парсера — на нём же держится вся штатная механика
-     * пометок. Не все трекеры его отдают; тогда сравнивать нечего, и работает
-     * обычный подбор.
+     * Хеша из выдачи парсера мало: это хеш **заголовка**, а не торрента
+     * ([parser.js:318](src/core/api/sources/parser.js:318)). У выходящего сериала
+     * заголовок раздачи меняется с каждой новой серией — «Серии 1-5 из 10»
+     * становится «Серии 1-6 из 10», — и хеш вместе с ним. Раздача та же, а
+     * опознать её было нельзя: continue уходил на другую ровно тогда, когда
+     * продолжать было нужнее всего. Поэтому рядом с хешем помним и ключ раздачи,
+     * который обновление переживает (см. releaseKey).
      */
     function isSameRelease(cand, ctx) {
-      if (!ctx.last || !ctx.last.hash) return false;
-      return !!cand.raw.hash && cand.raw.hash === ctx.last.hash;
+      var last = ctx.last;
+      if (!last) return false;
+      if (last.hash && cand.raw.hash && cand.raw.hash === last.hash) return true;
+      return !!last.key && cand.key === last.key;
+    }
+
+    /**
+     * Ключ раздачи, переживающий её обновление.
+     *
+     * Лучше всего — адрес темы на трекере (`Details` у Jackett и JacRed): он не
+     * меняется, сколько серий ни добавь. Где его нет, берём трекер, сезон и
+     * заголовок без номеров серий: всё остальное в заголовке — название, качество,
+     * студии — у обновлённой раздачи прежнее.
+     *
+     * @param {Object} raw - результат поиска в том виде, в каком его отдаёт Lampa.Parser
+     * @param {Object} parsed - его разбор (parse)
+     * @returns {string|null}
+     */
+    function releaseKey(raw, parsed) {
+      if (raw.Details) return 'd:' + raw.Details;
+      if (!parsed.stem) return null;
+
+      // Сезон входит в ключ явно: в «S02E01-05» он живёт внутри записи серий
+      // и уходит вместе с ней.
+      return 't:' + ((raw.Tracker || '') + '').toLowerCase() + '|' + parsed.seasons.join(',') + '|' + parsed.stem;
     }
 
     /**
@@ -920,7 +1047,7 @@
      * пользователь задал сам: перевод или качество.
      */
     function isConfident(relax) {
-      return relax.indexOf('voice') === -1 && relax.indexOf('quality') === -1;
+      return relax.indexOf('voice') === -1 && relax.indexOf('quality') === -1 && relax.indexOf('seeders') === -1;
     }
 
     /**
@@ -1232,7 +1359,7 @@
       }
       function choose() {
         if (finished) return;
-        var target = want ? findEpisode(files, want) : findBiggest(files);
+        var target = want ? findEpisode(files, want, candidate.parsed.seasons) : findBiggest(files);
 
         // Нужной серии в раздаче нет. Список уже открыт — пусть выбирает сам,
         // это честнее, чем запустить наугад другую серию.
@@ -1262,11 +1389,37 @@
       Lampa.Torrent.start(candidate.raw, movie);
     }
 
-    /** Файл нужной серии */
-    function findEpisode(files, want) {
-      return files.find(function (e) {
+    /**
+     * Файл нужной серии.
+     *
+     * Номер сезона берётся из имени файла, и в раздаче одного сезона его там часто
+     * нет вовсе — «05. Название серии.mkv». Тогда разбор ставит первый сезон, и
+     * пятая серия третьего сезона «не находилась» в раздаче, выбранной именно
+     * потому, что в ней третий сезон. Если сезон в файлах один и он не тот, что
+     * нужен, — это та же нумерация без сезона, и сверяем по серии.
+     *
+     * Только когда заголовок раздачи сам называет нужный сезон и только его:
+     * иначе раздача первого сезона без пометки подсунула бы чужую серию.
+     *
+     * @param {number[]} [release_seasons] - сезоны из заголовка раздачи
+     */
+    function findEpisode(files, want, release_seasons) {
+      var exact = files.find(function (e) {
         return e.element && e.element.season === want.season && e.element.episode === want.episode;
       });
+      if (exact) return exact;
+      var named = release_seasons || [];
+      if (named.length !== 1 || named[0] !== want.season) return null;
+      var seasons = [];
+      files.forEach(function (e) {
+        if (e.element && e.element.episode && seasons.indexOf(e.element.season) === -1) {
+          seasons.push(e.element.season);
+        }
+      });
+      if (seasons.length !== 1 || seasons[0] === want.season) return null;
+      return files.find(function (e) {
+        return e.element && e.element.episode === want.episode;
+      }) || null;
     }
 
     /**
@@ -1284,7 +1437,8 @@
       if (handlers.onError) handlers.onError(reason);
     }
     var run$1 = {
-      run: run
+      run: run,
+      findEpisode: findEpisode
     };
 
     /**
@@ -1426,6 +1580,45 @@
         var active = Lampa.Activity.active();
         if (active && active.component === 'full') refresh(active);
       });
+      followNative();
+    }
+
+    /**
+     * Раздача, открытая на штатном экране торрентов и ждущая запуска файла.
+     */
+    var pending = null;
+
+    /**
+     * Запуск раздачи мимо кнопки — через штатный экран торрентов.
+     *
+     * Раньше такой запуск проходил незамеченным: в памяти оставалась раздача,
+     * которую когда-то включала кнопка, и continue упорно возвращал на неё, хотя
+     * человек давно перешёл на другую. Какую раздачу смотреть — решение того же
+     * рода, что и при нажатии кнопки, поэтому запоминается так же.
+     *
+     * Засчитываем по запуску файла, а не по открытию раздачи: открыть, посмотреть
+     * список и уйти — обычное дело. Название для поиска на этом пути запоминает
+     * memory, здесь только сама раздача.
+     */
+    function followNative() {
+      Lampa.Listener.follow('torrent', function (e) {
+        if (e.type !== 'onenter') return;
+        var active = Lampa.Activity.active() || {};
+        pending = active.movie && e.element ? {
+          card: active.movie,
+          raw: e.element
+        } : null;
+      });
+      Lampa.Listener.follow('torrent_file', function (e) {
+        if (e.type === 'list_close') pending = null;
+        if (e.type !== 'onenter' || !pending) return;
+        try {
+          rememberRelease(pending.card, pick$1.normalize(pending.raw), null);
+        } catch (err) {
+          console.error('Continue', 'native launch error:', err);
+        }
+        pending = null;
+      });
     }
 
     /**
@@ -1465,14 +1658,22 @@
      */
     function hint(card, root) {
       describe(card, function (decision) {
-        draw(root, resume.label(decision, Lampa.Lang.translate, formatDate));
-        probeFresh(card, decision, function (available) {
-          // Серия вышла по календарю, но раздачи с ней ещё нет. Приглушаем
-          // иконку, чтобы это читалось без наведения, а подпись объясняет
-          // причину, когда кнопка в фокусе.
-          var where = resume.label(decision, Lampa.Lang.translate, formatDate);
-          draw(root, available ? where : (where ? where + ' · ' : '') + Lampa.Lang.translate('continue_not_yet_released'), !available);
-        });
+        return show(card, root, decision);
+      });
+    }
+
+    /**
+     * Нарисовать подпись по уже принятому решению. Отдельно от hint, чтобы после
+     * нажатия, когда решение на руках, не спрашивать серии заново.
+     */
+    function show(card, root, decision) {
+      var where = resume.label(decision, Lampa.Lang.translate, formatDate);
+      draw(root, where);
+      probeFresh(card, decision, function (available) {
+        // Серия вышла по календарю, но раздачи с ней ещё нет. Приглушаем
+        // иконку, чтобы это читалось без наведения, а подпись объясняет
+        // причину, когда кнопка в фокусе.
+        draw(root, available ? where : (where ? where + ' · ' : '') + Lampa.Lang.translate('continue_not_yet_released'), !available);
       });
       function draw(root, text, unavailable) {
         var live = root.find('.button--continue');
@@ -1486,52 +1687,57 @@
       }
     }
 
-    /** Серия считается свежей, пока раздачи могут ещё не появиться */
-    var FRESH_DAYS = 7;
-
-    /** Насколько доверяем прошлой проверке */
+    /**
+     * Насколько доверяем прошлой проверке. «Нет» проверяем часто — раздача вот-вот
+     * появится; «есть» держится дольше: вышедшая серия из раздач не пропадает.
+     */
     var PROBE_TTL = 1000 * 60 * 30;
+    var PROBE_TTL_OK = 1000 * 60 * 60 * 12;
 
     /**
      * Фоновая проверка: есть ли вообще раздача с нужной серией.
      *
-     * Делается только для свежих серий — у старых раздачи заведомо есть, и гонять
-     * поиск при каждом открытии карточки незачем. Результат кешируется, поэтому
-     * повторные заходы обходятся без запроса.
+     * Делается для серий последнего вышедшего сезона. Раньше порогом была неделя
+     * от эфира, но никакой срок не угадывает, когда появится озвучка: у нишевого
+     * сериала она отстаёт и на три недели, и всё это время кнопка обещала серию,
+     * которой нет. Граница проходит не по дате, а по смыслу: раздачи прошлых
+     * сезонов уже собраны целиком, а текущий ещё догоняет эфир. Результат
+     * кешируется, поэтому повторные заходы обходятся без запроса.
      */
     function probeFresh(card, decision, done) {
-      if (decision.mode !== 'next' && decision.mode !== 'first') return;
+      if (decision.mode === 'waiting' || decision.mode === 'restart') return;
       if (!decision.episode || !isSeries(card)) return;
-      if (!decision.air || !isFresh(decision.air)) return;
-      var key = cardID(card) + ':' + decision.season + ':' + decision.episode;
+
+      // Кеш смотрим для любой серии: его пишет и нажатие на кнопку, и если оно
+      // ничего не нашло, подпись должна это отражать.
       var cache = Lampa.Storage.cache(keys.KEYS.probe, 100, {});
-      var cached = cache[key];
-      if (cached && Date.now() - cached.t < PROBE_TTL) return done(cached.ok);
-      search(card, function (results, query) {
-        var out = pick$1.pick(results, pick$1.context(card, cardFilter(card), {
-          season: decision.season,
-          episode: decision.episode,
-          no_cam: Lampa.Storage.field(keys.KEYS.no_cam) !== false,
-          aliases: aliases(card, query)
-        }));
+      var cached = cache[probeKey(card, decision)];
+      if (cached && Date.now() - cached.t < (cached.ok ? PROBE_TTL_OK : PROBE_TTL)) return done(cached.ok);
+      if (decision.mode !== 'next' && decision.mode !== 'first') return;
+      if (!decision.airing) return;
+      search(card, evaluator(card, decision), function (out) {
         var ok = out.list.length > 0;
-        remember(key, ok);
+        rememberProbe(card, decision, ok);
         done(ok);
       }, function () {});
-      function remember(key, ok) {
-        var all = Lampa.Storage.cache(keys.KEYS.probe, 100, {});
-        delete all[key];
-        all[key] = {
-          ok: ok,
-          t: Date.now()
-        };
-        Lampa.Storage.set(keys.KEYS.probe, all);
-      }
     }
-    function isFresh(air) {
-      var time = new Date(air).getTime();
-      if (Number.isNaN(time)) return false;
-      return Date.now() - time < FRESH_DAYS * 24 * 60 * 60 * 1000;
+    function probeKey(card, decision) {
+      return cardID(card) + ':' + decision.season + ':' + decision.episode;
+    }
+
+    /**
+     * Итог проверки. Пишется и из фона, и по нажатию: если кнопка ничего не
+     * нашла, подпись обязана перестать обещать серию, а не ждать своего срока.
+     */
+    function rememberProbe(card, decision, ok) {
+      var key = probeKey(card, decision);
+      var all = Lampa.Storage.cache(keys.KEYS.probe, 100, {});
+      delete all[key];
+      all[key] = {
+        ok: ok,
+        t: Date.now()
+      };
+      Lampa.Storage.set(keys.KEYS.probe, all);
     }
 
     /**
@@ -1547,13 +1753,16 @@
         }, {
           next: card.next_episode_to_air
         });
-
-        // дата выхода целевой серии нужна, чтобы понять, свежая ли она
-        if (!decision.air && decision.episode) {
+        if (decision.episode) {
           var target = list.find(function (ep) {
             return ep.season_number === decision.season && ep.episode_number === decision.episode;
           });
-          if (target) decision.air = target.air_date || null;
+
+          // Сезон, который ещё догоняет эфир: раздачи с его сериями могут
+          // отставать. Серии нет в списке вовсе — список устарел, и она
+          // тем более на краю.
+          var last = list[list.length - 1];
+          decision.airing = !target || !!last && decision.season === last.season_number;
         }
         done(decision);
       });
@@ -1624,25 +1833,44 @@
       Lampa.Loading.start(function () {
         return Lampa.Loading.stop();
       });
-      search(card, function (results, query) {
-        var filter = cardFilter(card);
-        var params = {
-          season: decision.season,
-          episode: decision.episode,
-          no_cam: Lampa.Storage.field(keys.KEYS.no_cam) !== false,
-          last: lastRelease(card),
-          voice_rating: voiceRating(),
-          aliases: aliases(card, query)
-        };
-        var out = pick$1.pick(results, pick$1.context(card, filter, params));
+      search(card, evaluator(card, decision, {
+        last: lastRelease(card),
+        voice_rating: voiceRating()
+      }), function (out, query) {
         Lampa.Loading.stop();
-        if (!out.list.length) return nothingFound(card, out);
+        if (decision.episode) rememberProbe(card, decision, out.list.length > 0);
+        if (!out.list.length) {
+          var active = Lampa.Activity.active();
+
+          // подпись не должна обещать серию, которую только что не нашли
+          if (decision.episode && active && active.activity) show(card, active.activity.render(), decision);
+          return nothingFound(card, out);
+        }
         if (needAsk(card, out)) return choose(card, out, decision, query);
         launch(card, out.list[0], decision, query);
       }, function () {
         Lampa.Loading.stop();
         notice('continue_error_search');
       });
+    }
+
+    /**
+     * Отбор раздач под решение. Один на фоновую проверку и нажатие: разойдись они
+     * в фильтрах — подпись обещала бы то, чего кнопка потом не найдёт.
+     *
+     * @param {Object} [extra] - то, что нужно только для выбора лучшей: last, voice_rating
+     */
+    function evaluator(card, decision, extra) {
+      var filter = cardFilter(card);
+      return function (results, query) {
+        var params = Object.assign({
+          season: decision.season,
+          episode: decision.episode,
+          no_cam: Lampa.Storage.field(keys.KEYS.no_cam) !== false,
+          aliases: aliases(card, query)
+        }, extra);
+        return pick$1.pick(results, pick$1.context(card, filter, params));
+      };
     }
 
     /** Сколько названий пробуем, прежде чем признать, что раздач нет */
@@ -1661,26 +1889,37 @@
     /**
      * Поиск раздач.
      *
-     * Первым идёт запрос штатной кнопки торрентов — чтобы привычная выдача
-     * оставалась привычной. Если он пуст, перебираем остальные названия тайтла:
-     * трекерное название совпадает с названием карточки далеко не всегда, и без
-     * перебора кнопка на таких сериалах просто мертва.
+     * Первым идёт запомненное название, за ним запрос штатной кнопки торрентов —
+     * чтобы привычная выдача оставалась привычной. Дальше остальные названия
+     * тайтла: трекерное название совпадает с названием карточки далеко не всегда,
+     * и без перебора кнопка на таких сериалах просто мертва.
      *
-     * @param {Function} done - (results, query) — по какому названию нашлось
+     * Перебор идёт до первой выдачи, **из которой есть что запустить**, а не до
+     * первой непустой. Устаревшее название обычно что-то да находит — старые
+     * сезоны, чужой фильм-тёзку, — и остановка на нём прятала правильную выдачу
+     * за следующим названием навсегда.
+     *
+     * @param {Function} evaluate - (results, query) => результат pick.pick
+     * @param {Function} done - (out, query) — что выбрано и по какому названию; если
+     *                          подходящего нет нигде, приходит отбор первой непустой
+     *                          выдачи, чтобы объяснить почему
      */
-    function search(card, done, fail) {
-      var rec = memory.get(card);
+    function search(card, evaluate, done, fail) {
       var list = titles.candidates(card, {
-        remembered: rec && rec.q,
+        remembered: memory.searchName(card),
         parse_lang: Lampa.Storage.field('parse_lang'),
         lang: Lampa.Storage.field('language')
       }).slice(0, MAX_QUERIES);
       var title = card.title || card.name;
       var original = card.original_title || card.original_name;
       var index = 0;
+      var fallback = null;
       next();
       function next() {
-        if (index >= list.length) return done([], null);
+        if (index >= list.length) {
+          if (fallback) return done(fallback.out, fallback.query);
+          return done(evaluate([], null), null);
+        }
         var candidate = list[index++];
         Lampa.Parser.get({
           movie: card,
@@ -1691,7 +1930,14 @@
           page: 1
         }, function (data) {
           var results = data && data.Results || [];
-          if (results.length) return done(results, candidate.query);
+          if (results.length) {
+            var out = evaluate(results, candidate.query);
+            if (out.list.length) return done(out, candidate.query);
+            if (!fallback) fallback = {
+              out: out,
+              query: candidate.query
+            };
+          }
           next();
         },
         // Не «названия не подошли», а поиск недоступен — перебор бессмыслен.
@@ -1734,7 +1980,8 @@
       return {
         voice: voice.prefer(rec, Lampa.Storage.field('parse_lang')),
         resolution: rec.r || null,
-        hash: rec.h || null
+        hash: rec.h || null,
+        key: rec.d || null
       };
     }
 
@@ -1765,15 +2012,18 @@
         v: cand.parsed.voices[0] || null,
         r: cand.parsed.resolution || null,
         // Сама раздача, а не приметы. Штатная пометка «открывали» общая на все
-        // тайтлы и без порядка, так что «ту самую» помним сами.
-        h: cand.raw.hash || null
+        // тайтлы и без порядка, так что «ту самую» помним сами. Хеш — это хеш
+        // заголовка и меняется с каждой новой серией, поэтому рядом ключ,
+        // который обновление раздачи переживает.
+        // Пустая строка, а не null: null запись не трогает, и от прошлой
+        // раздачи остался бы чужой признак, узнающий её как «ту самую».
+        h: cand.raw.hash || '',
+        d: cand.key || ''
       });
-      if (titles.worth(card, query, Lampa.Storage.field('parse_lang'))) {
-        memory.set(card, {
-          q: query
-        });
-        memory.clarify(card, query);
-      }
+
+      // Нашлось по обычному названию — запомненное прежде стирается: иначе оно
+      // стояло бы первым в каждом следующем поиске (см. store.query).
+      memory.query(card, query);
       countVoice(cand);
     }
 
@@ -2031,6 +2281,8 @@
       Lampa.Storage.set('torrents_filter_data', all);
     }
     function launch(card, cand, decision, query) {
+      // свой запуск — не штатный, открытая там раньше раздача тут ни при чём
+      pending = null;
       rememberRelease(card, cand, query);
       var want = decision.season && decision.episode ? {
         season: decision.season,
