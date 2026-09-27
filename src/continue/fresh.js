@@ -74,8 +74,8 @@ function finale(show, ep, list) {
  */
 function check(decision, list, show, now) {
     // «Досмотрел прошлую — следующая вышла», «начал и не досмотрел» или «догнал
-    // эфир». Ни разу не смотренный сериал пропускаем: в истории он оказывается
-    // и просто от открытой карточки.
+    // эфир». Файл запускали, но прогресса нет — продолжать там нечего, и нового
+    // для человека тоже нет.
     if (decision.mode !== 'next' && decision.mode !== 'resume' && decision.mode !== 'waiting') return null
 
     let season = list.filter((ep) => ep.season_number === decision.season)
@@ -111,6 +111,39 @@ function check(decision, list, show, now) {
         fresh: now - airTime(latest.air_date) < AIRING_DAYS * DAY,
         f: finale(show, list[index], list)
     })
+}
+
+/**
+ * Место сериала в «Продолжить просмотр». Ряд отвечает на вопрос «что можно
+ * включить и продолжить», поэтому:
+ *
+ *   hide — продолжать нечего: сериал досмотрен или ждёт следующего сезона.
+ *          Выйдет новый сезон — решение кнопки станет `next`, и сериал
+ *          вернётся наверх как новый.
+ *   wait — сезон идёт, и человек ждёт серию: догнал эфир или серия вышла, а
+ *          раздачи ещё нет. Такой сериал в ряду нужен — по нему проверяют,
+ *          не вышло ли продолжение, — но первым стоять не должен: включить
+ *          его пока нельзя.
+ *   null — есть что включить, место по обычному порядку.
+ *
+ * @param {Object} decision - решение кнопки: `resume.decideSeries`
+ * @param {Array} list - вышедшие серии по порядку
+ * @param {Object|null} item - результат `check` с `ok` проверки раздачи
+ * @returns {string|null}
+ */
+function place(decision, list, item) {
+    if (decision.mode === 'restart') return 'hide'
+
+    if (decision.mode === 'waiting') {
+        let last = list[list.length - 1]
+
+        // Ждём серию текущего сезона — эфир идёт; ждём новый сезон — межсезонье
+        return last && decision.season === last.season_number ? 'wait' : 'hide'
+    }
+
+    if (item?.fresh && item.ok === false) return 'wait'
+
+    return null
 }
 
 /**
@@ -174,12 +207,17 @@ function label(item, translate) {
  * запусков, и выше в ней стоит то, что запускали позже. Так без единой
  * новой серии порядок в точности штатный.
  *
+ * Сериал, который ждёт серию (`place` → `wait`), не встаёт первым: первым
+ * всегда то, что можно включить. Остальной порядок у него обычный — он рядом
+ * и виден, но вечер с него не начинается.
+ *
  * @param {Array} cards - карточки в порядке истории, свежие первыми
  * @param {Object} played - {id: время запуска}
  * @param {Object} fresh - {id: {air}} — новые серии, на которые есть раздача
+ * @param {Object} [waiting] - {id: true} — сериалы, которые ждут серию
  * @returns {Array} те же карточки в новом порядке
  */
-function arrange(cards, played, fresh) {
+function arrange(cards, played, fresh, waiting) {
     let times = []
     let floor = 0
 
@@ -188,7 +226,7 @@ function arrange(cards, played, fresh) {
         times[i] = floor
     }
 
-    return cards
+    let out = cards
         .map((card, i) => {
             let air = fresh[card.id] ? airTime(fresh[card.id].air) || 0 : 0
 
@@ -196,6 +234,12 @@ function arrange(cards, played, fresh) {
         })
         .sort((a, b) => b.t - a.t || a.i - b.i)
         .map((entry) => entry.card)
+
+    let first = out.findIndex((card) => !waiting?.[card.id])
+
+    if (first > 0) out.unshift(out.splice(first, 1)[0])
+
+    return out
 }
 
-export default {airTime, finale, check, zones, label, arrange}
+export default {airTime, finale, check, place, zones, label, arrange}

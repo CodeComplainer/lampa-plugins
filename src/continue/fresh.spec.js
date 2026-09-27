@@ -181,6 +181,46 @@ suite('Подпись, даты и порядок', () => {
     })
 })
 
+suite('Место в «Продолжить просмотр»', () => {
+    function where(list, progress, next, item) {
+        let decision = resume.decideSeries(list, viewer(progress), {next: next})
+
+        return fresh.place(decision, list, item || null)
+    }
+
+    test('досмотрел сериал целиком — убрать', () => {
+        expect(where(aired([10], 400), {'1:10': 100}, null)).toBe('hide')
+    })
+
+    test('межсезонье: следующий сезон объявлен, но не вышел — убрать', () => {
+        let next = {season_number: 2, episode_number: 1, air_date: daysAgo(-90)}
+
+        expect(where(aired([10], 30), {'1:10': 100}, next)).toBe('hide')
+    })
+
+    test('догнал эфир, серия на следующей неделе — ждёт', () => {
+        let next = {season_number: 1, episode_number: 7, air_date: daysAgo(-5)}
+
+        expect(where(aired([6], 2), {'1:6': 100}, next)).toBe('wait')
+    })
+
+    test('серия вышла, раздачи нет — ждёт', () => {
+        expect(where(aired([6], 1), {'1:5': 100}, null, {fresh: true, ok: false})).toBe('wait')
+    })
+
+    test('вернулся с новым сезоном — как обычно', () => {
+        expect(where(aired([10, 1], 2), {'1:10': 100}, null, {fresh: true, ok: true})).toBeNull()
+    })
+
+    test('посреди сезона — как обычно', () => {
+        expect(where(aired([10], 30), {'1:4': 100}, null)).toBeNull()
+    })
+
+    test('запускал, но прогресса нет — как обычно', () => {
+        expect(where(aired([10], 30), {}, null)).toBeNull()
+    })
+})
+
 suite('Полоска сезона', () => {
     const kinds = (item) => fresh.zones(item).map((z) => z.kind + ':' + z.count)
 
@@ -254,5 +294,21 @@ suite('Порядок «Продолжить просмотр»', () => {
         let out = fresh.arrange(cards, {}, {2: {air: daysAgo(6)}, 3: {air: daysAgo(1)}})
 
         expect(ids(out)).toEqual([3, 2, 1, 4])
+    })
+
+    test('ждущий серию не встаёт первым, но остаётся рядом', () => {
+        let played = {1: NOW - HOUR, 2: NOW - 2 * HOUR, 3: NOW - 3 * HOUR}
+
+        expect(ids(fresh.arrange(cards, played, {}, {1: true}))).toEqual([2, 1, 3, 4])
+    })
+
+    test('ждущие не мешают друг другу, первым — то, что можно включить', () => {
+        let played = {1: NOW - HOUR, 2: NOW - 2 * HOUR, 3: NOW - 3 * HOUR}
+
+        expect(ids(fresh.arrange(cards, played, {}, {1: true, 2: true}))).toEqual([3, 1, 2, 4])
+    })
+
+    test('ждут все — порядок не трогаем', () => {
+        expect(ids(fresh.arrange(cards, {}, {}, {1: true, 2: true, 3: true, 4: true}))).toEqual([1, 2, 3, 4])
     })
 })
