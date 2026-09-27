@@ -399,7 +399,7 @@ function localBase() {
 function baseFor(file) {
     let item = catalog.find((p) => p.file === file)
 
-    if (item && item.local) return localBase()
+    if (item?.local) return localBase()
 
     return base()
 }
@@ -439,7 +439,7 @@ function titleOf(file) {
 
     let item = catalog.find((p) => p.file === file)
 
-    return (item && item.name) || file
+    return item?.name || file
 }
 
 function nameSelf() {
