@@ -400,6 +400,10 @@ function refresh() {
 
             if (item) items[card.id] = item
 
+            // Полный проход идёт минутами: показываем каждый сериал, как только
+            // он готов, а не всех разом в конце
+            apply(card.id, item)
+
             next()
         }
     }
@@ -429,18 +433,23 @@ function recheck() {
 
     try {
         inspect(card, (item) => {
-            if (item) state.items[card.id] = item
-            else delete state.items[card.id]
-
-            has_items = Object.keys(state.items).length > 0
+            apply(card.id, item)
 
             Lampa.Storage.set(keys.KEYS.fresh, state)
-
-            decorateAll()
         })
     } catch (err) {
         console.error('Continue', 'fresh error:', card.id, err)
     }
+}
+
+/** Итог по одному сериалу — сразу на постеры */
+function apply(id, item) {
+    if (item) state.items[id] = item
+    else delete state.items[id]
+
+    has_items = Object.keys(state.items).length > 0
+
+    decorateAll()
 }
 
 /**
