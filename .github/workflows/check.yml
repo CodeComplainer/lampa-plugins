@@ -61,7 +61,7 @@ jobs:
             url: ${{ steps.deployment.outputs.page_url }}
         steps:
             - id: deployment
-              uses: actions/deploy-pages@v4
+              uses: actions/deploy-pages@v5
 
     # Pages может отдать старую версию из кеша или не тот MIME, и телевизор
     # молча останется без плагина. Поэтому каждый файл скачивается так же,
