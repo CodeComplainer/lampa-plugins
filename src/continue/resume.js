@@ -26,7 +26,7 @@ const WATCHED = 90
  *   restart — всё просмотрено, продолжения не будет: можно смотреть сначала
  */
 function decideSeries(episodes, viewOf, meta) {
-    let list = (episodes || []).filter((ep) => ep && ep.episode_number)
+    let list = (episodes || []).filter((ep) => ep?.episode_number)
 
     if (!list.length) return {mode: 'first', season: null, episode: null, percent: 0}
 
@@ -85,11 +85,11 @@ function decideSeries(episodes, viewOf, meta) {
  * раздача с озвучкой появляется позже эфира, иногда на несколько дней.
  */
 function nothingLeft(last, view, meta) {
-    let next = meta && meta.next
+    let next = meta?.next
 
     // серия по данным TMDB уже вышла, а в нашем списке её нет — список устарел,
     // берём её целью: раздача может быть уже доступна
-    if (next && next.air_date && !isFuture(next.air_date)) {
+    if (next?.air_date && !isFuture(next.air_date)) {
         return {
             mode: 'next',
             season: next.season_number,
@@ -99,7 +99,7 @@ function nothingLeft(last, view, meta) {
         }
     }
 
-    if (next && next.air_date) {
+    if (next?.air_date) {
         return {
             mode: 'waiting',
             season: next.season_number,
@@ -128,7 +128,7 @@ function isFuture(air_date) {
  * Фильм: серий нет, решается только тем, начат он или нет.
  */
 function decideMovie(view) {
-    let percent = (view || {}).percent || 0
+    let percent = view?.percent || 0
 
     if (!percent) return {mode: 'first', season: null, episode: null, percent: 0, air: null}
 

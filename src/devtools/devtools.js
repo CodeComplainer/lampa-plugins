@@ -127,7 +127,7 @@ function poll() {
         '/__tv/poll',
         {device: device, info: version()},
         (answer) => {
-            if (answer && answer.command) execute(answer.command)
+            if (answer?.command) execute(answer.command)
 
             poll()
         },
@@ -141,7 +141,7 @@ function execute(command) {
     try {
         payload.result = present(eval(command.code))
     } catch (e) {
-        payload.error = (e && e.message) + '\n' + (e && e.stack)
+        payload.error = e?.message + '\n' + e?.stack
     }
 
     post('/__tv/result', payload)
@@ -286,7 +286,7 @@ function captureConsole() {
     })
 
     window.addEventListener('unhandledrejection', (e) => {
-        record('error', ['unhandled rejection', (e.reason && e.reason.message) || String(e.reason)])
+        record('error', ['unhandled rejection', e.reason?.message || String(e.reason)])
     })
 }
 

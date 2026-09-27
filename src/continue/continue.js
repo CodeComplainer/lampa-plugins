@@ -364,7 +364,7 @@ function episodes(card, done) {
         numbers.forEach((number) => {
             let season = data[number]
 
-            if (!season || !season.episodes) return
+            if (!season?.episodes) return
 
             season.episodes.forEach((ep) => {
                 let air = ep.air_date ? new Date(ep.air_date).getTime() : 0
@@ -424,8 +424,7 @@ function play(card, decision) {
                 let active = Lampa.Activity.active()
 
                 // подпись не должна обещать серию, которую только что не нашли
-                if (decision.episode && active && active.activity)
-                    show(card, active.activity.render(), decision)
+                if (decision.episode && active?.activity) show(card, active.activity.render(), decision)
 
                 return nothingFound(card, out)
             }
@@ -532,7 +531,7 @@ function search(card, evaluate, done, fail) {
                 page: 1
             },
             (data) => {
-                let results = (data && data.Results) || []
+                let results = data?.Results || []
 
                 if (results.length) {
                     let out = evaluate(results, candidate.query)
@@ -671,7 +670,7 @@ function voiceRating() {
     let watched = Lampa.Storage.cache(store.KEY, store.LIMIT, {})
 
     Object.keys(watched).forEach((key) => {
-        let track = watched[key] && watched[key].a
+        let track = watched[key]?.a
         let name = track && studio.one(track.n)
 
         if (name) rating[name] = (rating[name] || 0) + PICK_WEIGHT

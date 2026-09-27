@@ -98,7 +98,7 @@ function worth(card, query, parse_lang) {
  * альтернативным названием.
  */
 function alternatives(card, lang) {
-    let block = card && card.alternative_titles
+    let block = card?.alternative_titles
 
     if (!block) return []
 

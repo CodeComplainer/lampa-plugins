@@ -31,7 +31,7 @@ const CLARIFY_KEEP = 5
  * для поиска выбирают на сериал, а не на каждый эпизод.
  */
 function cardID(card) {
-    if (!card || !card.id) return null
+    if (!card?.id) return null
 
     let tv = card.number_of_seasons || card.original_name || card.first_air_date
 
@@ -146,7 +146,7 @@ function create(storage) {
      * поиске, хотя человек давно ищет иначе.
      */
     function query(card, value) {
-        if (!card || !card.id || !value) return
+        if (!card?.id || !value) return
 
         if (titles.worth(card, value, storage.field('parse_lang'))) {
             set(card, {q: value})
@@ -157,7 +157,7 @@ function create(storage) {
 
         let rec = get(card)
 
-        if (!rec || !rec.q) return
+        if (!rec?.q) return
 
         let stale = rec.q
 
@@ -177,13 +177,13 @@ function create(storage) {
      * @returns {string|null}
      */
     function searchName(card) {
-        if (!card || !card.id) return null
+        if (!card?.id) return null
 
         let rec = get(card)
 
         if (rec && typeof rec.q === 'string') return rec.q || null
 
-        let list = (storage.get('user_clarifys', '{}') || {})[card.id] || []
+        let list = storage.get('user_clarifys', '{}')?.[card.id] || []
 
         return list[list.length - 1] || null
     }

@@ -123,7 +123,7 @@ let seen = watch.create()
 let looked = 0
 
 function lookAtTracks() {
-    if (!current || !current.tracks || current.tracks.length < 2) return
+    if (!current?.tracks || current.tracks.length < 2) return
 
     let now = Date.now()
 
@@ -146,7 +146,7 @@ function onTracks(tracks) {
 
     let rec = current.card && memory.get(current.card)
 
-    if (!rec || !rec.a) return
+    if (!rec?.a) return
 
     let wanted = match.match(tracks, savedTrack(rec.a))
 
@@ -162,7 +162,7 @@ function onTracks(tracks) {
  * переключил человек дорожку сам или её выбрал плеер.
  */
 function rememberTrack() {
-    if (!current || !current.card || !current.tracks || current.tracks.length < 2) return
+    if (!current?.card || !current.tracks || current.tracks.length < 2) return
 
     let chosen = match.selected(current.tracks)
     let about = match.describe(chosen)
@@ -260,7 +260,7 @@ function onWebosTracks(tracks) {
 
     let rec = current.card && memory.get(current.card)
 
-    if (!rec || !rec.a) return
+    if (!rec?.a) return
 
     let wanted = match.match(tracks, savedTrack(rec.a))
 
@@ -275,7 +275,7 @@ function onWebosSubs(subs) {
 
     current.subs = subs
 
-    if (!subs || !subs.length) return
+    if (!subs?.length) return
 
     let rec = current.card && memory.get(current.card)
 
@@ -288,7 +288,7 @@ function onWebosSubs(subs) {
 }
 
 function rememberSubs() {
-    if (!current || !current.card || !current.subs) return
+    if (!current?.card || !current.subs) return
 
     // выбирать было не из чего — решения человека тут нет
     if (!match.realSubs(current.subs).length) return
@@ -303,7 +303,7 @@ function rememberSubs() {
     // Язык субтитров человек меняет куда реже, чем тайтлы, поэтому последний
     // выбранный держим ещё и общим — он выручает на карточке, где своей записи
     // ещё нет.
-    if (about && about.lang) Lampa.Storage.set(keys.KEYS.subs_lang, about.lang)
+    if (about?.lang) Lampa.Storage.set(keys.KEYS.subs_lang, about.lang)
 }
 
 /* --------------------------------------------------------------- название */
@@ -338,7 +338,7 @@ function followSearch() {
 
 function applyQuery(object) {
     // человек уточняет название прямо сейчас — его выбор важнее запомненного
-    if (!object || !object.movie || object.clarification) return
+    if (!object?.movie || object.clarification) return
 
     let query = memory.searchName(object.movie)
 
@@ -351,7 +351,7 @@ function applyQuery(object) {
 /* ------------------------------------------------------------------ общее */
 
 function cardOf(data) {
-    if (data && data.card) return data.card
+    if (data?.card) return data.card
 
     let active = Lampa.Activity.active() || {}
 

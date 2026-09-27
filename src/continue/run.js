@@ -115,7 +115,7 @@ function findEpisode(files, want, release_seasons) {
     let seasons = []
 
     files.forEach((e) => {
-        if (e.element && e.element.episode && seasons.indexOf(e.element.season) === -1) {
+        if (e.element?.episode && seasons.indexOf(e.element.season) === -1) {
             seasons.push(e.element.season)
         }
     })

@@ -280,7 +280,7 @@ function remembered() {
 
     let rec = Lampa.Storage.cache(store.KEY, store.LIMIT, {})[key]
 
-    if (!rec || !rec.s) return null
+    if (!rec?.s) return null
 
     return rec.s.l || rec.s.n ? rec.s : null
 }
@@ -310,7 +310,7 @@ function seconds() {
 function position() {
     let video = Lampa.PlayerVideo.video()
 
-    return (video && video.currentTime) || 0
+    return video?.currentTime || 0
 }
 
 /** Новый файл: чужие нажатия и чужие дорожки к нему отношения не имеют */
